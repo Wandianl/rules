@@ -19,39 +19,65 @@ jobs:
         python-version: '3.10'
         
     - name: Install dependencies
-      run: pip install requests
+      run: pip install requests pyyaml
       
     - name: Convert rules
       run: |
         python -c "
         import requests
+        import yaml
+        from urllib.parse import urlparse
 
-        def convert_to_mrs(url, output_filename, rule_type):
+        def is_valid_domain(domain):
+            try:
+                result = urlparse('http://' + domain)
+                return all([result.scheme == 'http', result.netloc != ''])
+            except:
+                return False
+
+        def convert_to_mrs(url, output_filename):
             response = requests.get(url)
             response.raise_for_status()
+            
+            # 尝试解析为 YAML
+            try:
+                data = yaml.safe_load(response.text)
+                domains = data.get('payload', [])
+            except:
+                # 如果不是 YAML，按行处理
+                domains = [line.strip(\"'\") for line in response.text.splitlines() 
+                          if line.strip() and not line.startswith('#')]
+            
             with open(output_filename, 'w', encoding='utf-8') as f:
-                for line in response.text.splitlines():
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        domain = line.strip(\"'\")
-                        f.write(f\"{rule_type},{domain}\\n\")
+                for domain in domains:
+                    domain = str(domain).strip(\"' \")
+                    if not domain or domain.startswith('#'):
+                        continue
+                    
+                    # 处理通配符
+                    if domain.startswith('*.'):
+                        domain = domain[2:]
+                    
+                    # 验证域名有效性
+                    if is_valid_domain(domain):
+                        f.write(f'DOMAIN-SUFFIX,{domain}\\n')
+                    else:
+                        print(f'Skipping invalid domain: {domain}')
 
+        # 转换三个规则文件
         convert_to_mrs(
-            \"https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt\",
-            \"direct.mrs\",
-            \"DOMAIN-SUFFIX\"
+            'https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt',
+            'direct.mrs'
         )
 
         convert_to_mrs(
-            \"https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt\",
-            \"proxy.mrs\",
-            \"DOMAIN-SUFFIX\"
+            'https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt',
+            'proxy.mrs'
         )
 
         convert_to_mrs(
-            \"https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt\",
-            \"reject.mrs\",
-            \"DOMAIN-SUFFIX\"
+            'https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt',
+            'reject.mrs'
         )
         "
         
