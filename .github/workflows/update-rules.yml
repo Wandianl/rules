@@ -38,8 +38,22 @@ jobs:
           echo "# Generated on $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$output_file"
           echo "" >> "$output_file"
           
-          # 转换规则并追加
-          awk -v policy="${rules[$type]}" '{print "  - \"+" $1 " " policy "\""}' "${type}.txt" >> "$output_file"
+          # 正确提取域名并转换格式
+          grep -E "^  - '[^']+'" "${type}.txt" | \
+          sed "s/^  - '//;s/'$//" | \
+          awk -v policy="${rules[$type]}" '{
+            # 添加通配符前缀
+            if ($0 ~ /^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$/) {
+              # 根域名
+              print "  - \"" $0 "\" # " policy
+            } else if ($0 ~ /^[a-zA-Z0-9-]+\.[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$/) {
+              # 多级子域名
+              print "  - \"+." $0 "\" # " policy
+            } else {
+              # 普通域名
+              print "  - \"+" $0 "\" # " policy
+            }
+          }' >> "$output_file"
           
           echo "✅ ${type}.txt converted to ${output_file}"
           echo "📋 First 3 lines:"
@@ -69,4 +83,4 @@ jobs:
         ls -lh *.mrs
         echo ""
         echo "📝 proxy.mrs preview:"
-        head -5 proxy.mrs
+        head -10 proxy.mrs
