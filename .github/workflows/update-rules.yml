@@ -20,65 +20,48 @@ jobs:
       with:
         fetch-depth: 0  # 关键修复：拉取完整历史
 
-    - name: Convert to MRS Format
+    - name: Debug - Show Source URL
       run: |
-        # 下载源文件（带重试机制）
-        for i in {1..3}; do
-          if curl -s "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${{ matrix.rulesets.src }}" -o source.tmp; then
-            break
-          elif [ $i -eq 3 ]; then
-            echo "❌ 无法下载源文件" > ${{ matrix.rulesets.dest }}
-            exit 1
-          fi
-          sleep 5
-        done
+        echo "源文件URL: https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${{ matrix.rulesets.src }}"
 
-        # 严格过滤有效规则
-        awk '
-        BEGIN {
-          print "#MRS-RULES-V1"
-          print "# Generated at: $(date -u +'"'"'%Y-%m-%dT%H:%M:%SZ'"'"')"
-        }
-        /^[^#]/ && $0 !~ /^[[:space:]]*$/ {
-          # 清理YAML格式符号（如 - 'example.com'）
-          gsub(/^[[:space:]]*-[[:space:]]*'"'"'?|'"'"'?$/, "", $0)
-          if ($0 ~ /^\*\./) {
-            print "domain-wildcard:" substr($0, 3)
-            cnt++
-          }
-          else if ($0 ~ /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/) {
-            print "domain:" $0
-            cnt++
-          }
-        }
-        END {
-          print "# Total rules: " cnt
-          if (cnt == 0) {
-            print "⚠️ 警告：未检测到有效规则" > "/dev/stderr"
-            print "# 原始文件样例：" 
-            system("head -n 10 source.tmp | sed '"'"'s/^/# /'"'"'")
-          }
-        }
-        ' source.tmp > ${{ matrix.rulesets.dest }}
-        rm source.tmp
+    - name: Convert to MRS Format (强制生成测试规则)
+      run: |
+        # 下载源文件（带详细调试）
+        curl -v "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${{ matrix.rulesets.src }}" -o source.tmp 2> curl.log
+        echo "=== 源文件行数 ==="
+        wc -l source.tmp
+        echo "=== 前5行内容 ==="
+        head -n 5 source.tmp || echo "无法读取文件"
 
-    - name: Commit changes
+        # 强制生成测试内容（无论源文件是否有效）
+        echo "#MRS-RULES-V1" > ${{ matrix.rulesets.dest }}
+        echo "# Generated at: $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> ${{ matrix.rulesets.dest }}
+        echo "domain:example.com" >> ${{ matrix.rulesets.dest }}
+        echo "domain-wildcard:test.example.com" >> ${{ matrix.rulesets.dest }}
+        echo "# Total rules: 2" >> ${{ matrix.rulesets.dest }}
+
+        # 如果源文件有效，追加真实规则
+        if [ $(grep -v '^#' source.tmp | wc -l) -gt 0 ]; then
+          echo "# 真实规则开始 ===" >> ${{ matrix.rulesets.dest }}
+          grep -v '^#' source.tmp | head -n 5 >> ${{ matrix.rulesets.dest }}
+        fi
+
+        # 保留调试日志
+        echo "=== curl日志 ==="
+        cat curl.log
+
+    - name: Commit changes (强制推送)
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        # 配置Git身份
         git config --global user.name "mrs-generator-bot"
         git config --global user.email "mrs-generator@users.noreply.github.com"
-
-        # 强制同步远程分支（关键修复）
+        
+        # 强制同步远程分支
         git fetch origin main
         git reset --hard origin/main
-
-        # 添加并提交变更
+        
+        # 添加并提交所有变更
         git add *.mrs
-        if ! git diff --quiet --staged; then
-          git commit -m "Update MRS rules [auto]"
-          git push --force-with-lease origin main
-        else
-          echo "⚠️ 无变更，跳过提交"
-        fi
+        git commit -m "强制更新MRS规则 [调试模式]" || echo "⚠️ 提交失败（但继续执行）"
+        git push --force-with-lease origin main
