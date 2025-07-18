@@ -11,22 +11,28 @@ on:
 jobs:
   generate-mrs-rules:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/metacubex/mihomo:alpha
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Setup environment
+    - name: Setup Docker
       run: |
-        mkdir -p rules
+        # 安装 Docker
+        sudo apt-get update
+        sudo apt-get install -y docker.io
         
-    - name: Install dependencies
-      run: |
-        apk add --no-cache curl grep awk
+        # 添加当前用户到 docker 组
+        sudo usermod -aG docker $USER
+        newgrp docker
+        
+        # 验证 Docker 安装
+        docker --version
         
     - name: Download and convert rules
       run: |
+        # 创建规则目录
+        mkdir -p rules
+        
         # 定义规则类型
         types=("direct" "proxy" "reject")
         
@@ -36,15 +42,22 @@ jobs:
           echo "📥 Downloading $url..."
           curl -s -o "${type}.yaml" "$url"
           
-          # 提取域名并生成中间文件
-          echo "🔄 Processing ${type} rules..."
-          # 使用可靠的提取方法
+          # 提取域名
+          echo "🔄 Extracting domains for ${type}..."
           awk -F"'" '/^  - '\''/ {print $2}' "${type}.yaml" > "${type}.txt"
           
-          # 如果提取失败，使用备用方法
+          # 备用提取方法
           if [ ! -s "${type}.txt" ]; then
             echo "⚠️ Using alternative extraction method..."
             grep -E "^  - '" "${type}.yaml" | sed "s/^  - '//;s/'$//" > "${type}.txt"
+          fi
+          
+          # 确保文件不为空
+          if [ ! -s "${type}.txt" ]; then
+            echo "❌ Error: ${type}.txt is empty after extraction!"
+            echo "Original file preview:"
+            head -n 5 "${type}.yaml"
+            exit 1
           fi
           
           # 确保所有域名都有通配符
@@ -56,27 +69,15 @@ jobs:
             }
           }' "${type}.txt" > "${type}-processed.txt"
           
-          # 检查文件是否为空
-          if [ ! -s "${type}-processed.txt" ]; then
-            echo "❌ Error: ${type}-processed.txt is empty!"
-            echo "Original file content:"
-            head -n 20 "${type}.yaml"
-            exit 1
-          fi
-          
           echo "First 3 domains:"
           head -3 "${type}-processed.txt"
-            
-          # 使用 Mihomo 生成 MRS
+          
+          # 使用 Docker Hub 上的 Mihomo 镜像
           echo "⚙️ Generating MRS for ${type}..."
-          mihomo rule-set \
-            -format text \
-            -o "rules/${type}.mrs" \
-            "${type}-processed.txt"
+          docker run --rm -v $(pwd):/data metacubex/mihomo:alpha \
+            rule-set -format text -o "/data/rules/${type}.mrs" "/data/${type}-processed.txt"
             
           echo "✅ Generated optimized ${type}.mrs"
-          echo "File info:"
-          file "rules/${type}.mrs"
         done
         
         # 清理临时文件
