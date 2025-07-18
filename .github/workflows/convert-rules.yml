@@ -28,14 +28,31 @@ jobs:
         LATEST_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
         echo "Latest version: $LATEST_VERSION"
         
-        # 下载最新版本的mihomo
-        wget -O mihomo.tar.gz "https://github.com/MetaCubeX/mihomo/releases/download/${LATEST_VERSION}/mihomo-linux-amd64-${LATEST_VERSION}.tar.gz"
-        tar -xzf mihomo.tar.gz
+        # 尝试多种文件名格式
+        echo "Trying to download mihomo binary..."
         
-        # 找到解压出的文件并移动到bin目录
-        MIHOMO_FILE=$(find . -name "mihomo-linux-amd64*" -type f | head -1)
-        chmod +x "$MIHOMO_FILE"
-        sudo mv "$MIHOMO_FILE" /usr/local/bin/mihomo
+        # 方法1: 尝试 compatible 版本 (推荐)
+        if wget -O mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${LATEST_VERSION}/mihomo-linux-amd64-compatible-${LATEST_VERSION}.gz" 2>/dev/null; then
+          echo "Downloaded compatible version"
+          gzip -d mihomo.gz
+          chmod +x mihomo
+          sudo mv mihomo /usr/local/bin/mihomo
+        # 方法2: 尝试普通版本
+        elif wget -O mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${LATEST_VERSION}/mihomo-linux-amd64-${LATEST_VERSION}.gz" 2>/dev/null; then
+          echo "Downloaded regular version"
+          gzip -d mihomo.gz
+          chmod +x mihomo
+          sudo mv mihomo /usr/local/bin/mihomo
+        # 方法3: 使用Docker方式
+        else
+          echo "Direct download failed, using Docker to extract binary..."
+          docker pull metacubex/mihomo:latest
+          docker create --name mihomo_temp metacubex/mihomo:latest
+          docker cp mihomo_temp:/mihomo ./mihomo
+          docker rm mihomo_temp
+          chmod +x mihomo
+          sudo mv mihomo /usr/local/bin/mihomo
+        fi
         
         # 验证安装
         mihomo version
