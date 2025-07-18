@@ -17,15 +17,11 @@ jobs:
       
     - name: Fetch and convert rules
       run: |
-        # 定义规则类型和对应的策略
-        declare -A rules=(
-          ["direct"]="DIRECT"
-          ["proxy"]="PROXY"
-          ["reject"]="REJECT"
-        )
+        # 定义规则类型
+        types=("direct" "proxy" "reject")
         
         # 处理每个规则文件
-        for type in "${!rules[@]}"; do
+        for type in "${types[@]}"; do
           url="https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${type}.txt"
           output_file="${type}.mrs"
           
@@ -34,29 +30,28 @@ jobs:
           
           echo "🔄 Converting to ${output_file}..."
           # 生成文件头部
-          echo "# Converted from ${url}" > "$output_file"
+          echo "payload:" > "$output_file"
+          echo "# Converted from ${url}" >> "$output_file"
           echo "# Generated on $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$output_file"
           echo "" >> "$output_file"
           
-          # 正确提取域名并转换为纯通配符格式
+          # 正确提取域名并转换为YAML格式
           grep -E "^  - '[^']+'" "${type}.txt" | \
           sed "s/^  - '//;s/'$//" | \
           awk '{
             # 确保每个域名都转换为通配符格式
-            domain = $0
-            # 如果域名以通配符开头，保持原样
-            if (domain ~ /^\*/) {
-              print domain
+            if ($0 ~ /^\*/) {
+              domain = $0
+            } else {
+              domain = "*." $0
             }
-            # 否则添加 *. 前缀
-            else {
-              print "*." domain
-            }
+            # 输出为YAML格式
+            print "  - \x27" domain "\x27"
           }' >> "$output_file"
           
           echo "✅ ${type}.txt converted to ${output_file}"
           echo "📋 First 5 lines:"
-          head -5 "$output_file"
+          head -7 "$output_file"  # 显示头部和部分内容
           echo ""
         done
         
