@@ -25,9 +25,13 @@ jobs:
         awk 'NF {print "domain:" $0}' > ${{ matrix.rules.dest }}
 
     - name: Commit and push changes
-      if: matrix.rules.src == 'reject.txt'
-      run: |
-        git config --global user.name "GitHub Actions"
-        git config --global user.email "actions@github.com"
-        git add *.mrs  # 添加根目录下的 .mrs 文件
-        git diff --quiet && git diff --staged --quiet || (git commit -m "Update rules" && git push)
+  if: matrix.rules.src == 'reject.txt'
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 自动生成的令牌
+  run: |
+    git config --global user.name "github-actions[bot]"
+    git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+    git pull --rebase  # 避免冲突
+    git add *.mrs
+    git commit -m "Auto-update rules"
+    git push "https://$GITHUB_TOKEN@github.com/${{ github.repository }}.git"
