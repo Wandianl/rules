@@ -24,11 +24,21 @@ jobs:
         
     - name: Install mihomo
       run: |
+        # 获取最新版本号
+        LATEST_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        echo "Latest version: $LATEST_VERSION"
+        
         # 下载最新版本的mihomo
-        wget -O mihomo.tar.gz https://github.com/MetaCubeX/mihomo/releases/latest/download/mihomo-linux-amd64-v1.18.0.tar.gz
+        wget -O mihomo.tar.gz "https://github.com/MetaCubeX/mihomo/releases/download/${LATEST_VERSION}/mihomo-linux-amd64-${LATEST_VERSION}.tar.gz"
         tar -xzf mihomo.tar.gz
-        chmod +x mihomo-linux-amd64-v1.18.0
-        sudo mv mihomo-linux-amd64-v1.18.0 /usr/local/bin/mihomo
+        
+        # 找到解压出的文件并移动到bin目录
+        MIHOMO_FILE=$(find . -name "mihomo-linux-amd64*" -type f | head -1)
+        chmod +x "$MIHOMO_FILE"
+        sudo mv "$MIHOMO_FILE" /usr/local/bin/mihomo
+        
+        # 验证安装
+        mihomo version
         
     - name: Download rule files
       run: |
