@@ -1,4 +1,4 @@
-name: Update Clash Rules
+name: Update Rules
 
 on:
   schedule:
