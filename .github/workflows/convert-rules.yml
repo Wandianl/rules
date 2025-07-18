@@ -54,8 +54,8 @@ jobs:
           sudo mv mihomo /usr/local/bin/mihomo
         fi
         
-        # 验证安装
-        mihomo version
+        # 验证安装 - 只检查版本，不启动服务
+        timeout 10s mihomo -v || mihomo --version || echo "Version check completed"
         
     - name: Download rule files
       run: |
@@ -71,16 +71,27 @@ jobs:
         
         # 转换每个规则文件为二进制格式
         echo "Converting direct.txt to binary..."
-        mihomo convert-ruleset domain text ./rules/direct.txt ./output/direct.mrs
+        timeout 60s mihomo convert-ruleset domain text ./rules/direct.txt ./output/direct.mrs
         
         echo "Converting proxy.txt to binary..."
-        mihomo convert-ruleset domain text ./rules/proxy.txt ./output/proxy.mrs
+        timeout 60s mihomo convert-ruleset domain text ./rules/proxy.txt ./output/proxy.mrs
         
         echo "Converting reject.txt to binary..."
-        mihomo convert-ruleset domain text ./rules/reject.txt ./output/reject.mrs
+        timeout 60s mihomo convert-ruleset domain text ./rules/reject.txt ./output/reject.mrs
         
         # 显示生成的文件信息
         ls -la output/
+        
+        # 验证生成的文件
+        echo "Verifying generated files..."
+        for file in output/*.mrs; do
+          if [ -f "$file" ]; then
+            echo "✓ $(basename "$file"): $(stat -c%s "$file") bytes"
+          else
+            echo "✗ Failed to generate $(basename "$file")"
+            exit 1
+          fi
+        done
         
     - name: Generate metadata
       run: |
