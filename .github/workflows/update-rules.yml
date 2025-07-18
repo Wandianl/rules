@@ -2,8 +2,8 @@ name: Update Clash Rules for Mihomo
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天 UTC 时间 0 点运行
-  workflow_dispatch:     # 允许手动触发
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   update-rules:
@@ -20,71 +20,62 @@ jobs:
         
     - name: Install dependencies
       run: pip install requests pyyaml
-      
-    - name: Convert rules
+        
+    - name: Convert rules with wildcards
       run: |
         python -c "
         import requests
         import yaml
-        from urllib.parse import urlparse
+        import re
 
-        def is_valid_domain(domain):
-            try:
-                result = urlparse('http://' + domain)
-                return all([result.scheme == 'http', result.netloc != ''])
-            except:
-                return False
+        def process_domain(domain):
+            domain = str(domain).strip(\"' \")
+            # 保留原始通配符格式
+            if domain.startswith('*.'):
+                return f'DOMAIN-SUFFIX,{domain}'
+            # 普通域名也转为DOMAIN-SUFFIX
+            return f'DOMAIN-SUFFIX,{domain}'
 
         def convert_to_mrs(url, output_filename):
+            print(f'Processing {url}...')
             response = requests.get(url)
             response.raise_for_status()
             
-            # 尝试解析为 YAML
+            domains = []
             try:
                 data = yaml.safe_load(response.text)
                 domains = data.get('payload', [])
             except:
-                # 如果不是 YAML，按行处理
-                domains = [line.strip(\"'\") for line in response.text.splitlines() 
-                          if line.strip() and not line.startswith('#')]
+                domains = [line.strip() for line in response.text.splitlines() 
+                         if line.strip() and not line.startswith('#')]
             
-            with open(output_filename, 'w', encoding='utf-8') as f:
-                for domain in domains:
-                    domain = str(domain).strip(\"' \")
-                    if not domain or domain.startswith('#'):
-                        continue
-                    
-                    # 处理通配符
-                    if domain.startswith('*.'):
-                        domain = domain[2:]
-                    
-                    # 验证域名有效性
-                    if is_valid_domain(domain):
-                        f.write(f'DOMAIN-SUFFIX,{domain}\\n')
-                    else:
-                        print(f'Skipping invalid domain: {domain}')
-
-        # 转换三个规则文件
-        convert_to_mrs(
-            'https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt',
-            'direct.mrs'
-        )
+            with open(output_filename, 'w', encoding='utf-8', newline='\n') as f:
+                for item in domains:
+                    try:
+                        rule = process_domain(item)
+                        if not re.search(r'\.', rule.split(',')[1]):
+                            continue
+                        f.write(f'{rule}\n')
+                    except Exception as e:
+                        print(f'Skipping invalid entry: {item} - {e}')
 
         convert_to_mrs(
             'https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt',
             'proxy.mrs'
         )
-
-        convert_to_mrs(
-            'https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt',
-            'reject.mrs'
-        )
         "
         
-    - name: Commit and push changes
+    - name: Validate output
+      run: |
+        echo "=== 文件前10行验证 ==="
+        head -n 10 proxy.mrs
+        echo "=== 格式检查 ==="
+        ! grep -vE '^(DOMAIN-SUFFIX,\*?\.[a-z0-9-]+|[#])' proxy.mrs || (echo "发现格式错误行" && exit 1)
+        
+    - name: Commit and push
       run: |
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
         git add *.mrs
-        git commit -m "Update Clash rules for Mihomo" || echo "No changes to commit"
+        git commit -m "Update rules with wildcards [$(date +'%Y-%m-%d')]" || echo "No changes"
         git push
