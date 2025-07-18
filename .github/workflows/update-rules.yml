@@ -17,16 +17,25 @@ jobs:
       
     - name: Setup Docker
       run: |
-        # 安装 Docker
+        # 使用官方方法安装Docker
         sudo apt-get update
-        sudo apt-get install -y docker.io
+        sudo apt-get install -y ca-certificates curl gnupg
+        sudo install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        sudo chmod a+r /etc/apt/keyrings/docker.gpg
         
-        # 添加当前用户到 docker 组
-        sudo usermod -aG docker $USER
-        newgrp docker
+        # 添加Docker官方仓库
+        echo \
+          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+          $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+          sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
         
-        # 验证 Docker 安装
-        docker --version
+        # 安装Docker
+        sudo apt-get update
+        sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        
+        # 验证安装
+        sudo docker run hello-world
         
     - name: Download and convert rules
       run: |
@@ -44,13 +53,8 @@ jobs:
           
           # 提取域名
           echo "🔄 Extracting domains for ${type}..."
-          awk -F"'" '/^  - '\''/ {print $2}' "${type}.yaml" > "${type}.txt"
-          
-          # 备用提取方法
-          if [ ! -s "${type}.txt" ]; then
-            echo "⚠️ Using alternative extraction method..."
-            grep -E "^  - '" "${type}.yaml" | sed "s/^  - '//;s/'$//" > "${type}.txt"
-          fi
+          # 使用可靠的提取方法
+          grep -E "^  - '" "${type}.yaml" | sed "s/^  - '//;s/'$//" > "${type}.txt"
           
           # 确保文件不为空
           if [ ! -s "${type}.txt" ]; then
@@ -74,7 +78,7 @@ jobs:
           
           # 使用 Docker Hub 上的 Mihomo 镜像
           echo "⚙️ Generating MRS for ${type}..."
-          docker run --rm -v $(pwd):/data metacubex/mihomo:alpha \
+          sudo docker run --rm -v $(pwd):/data metacubex/mihomo:alpha \
             rule-set -format text -o "/data/rules/${type}.mrs" "/data/${type}-processed.txt"
             
           echo "✅ Generated optimized ${type}.mrs"
