@@ -1,4 +1,4 @@
-name: Generate Optimized MRS Rules with Docker
+name: Generate Rule Files for Conversion
 
 on:
   schedule:
@@ -9,35 +9,13 @@ on:
       - main
 
 jobs:
-  generate-mrs-rules:
+  generate-rule-files:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Setup Docker
-      run: |
-        # 使用官方方法安装Docker
-        sudo apt-get update
-        sudo apt-get install -y ca-certificates curl gnupg
-        sudo install -m 0755 -d /etc/apt/keyrings
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-        sudo chmod a+r /etc/apt/keyrings/docker.gpg
-        
-        # 添加Docker官方仓库
-        echo \
-          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-          $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-          sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-        
-        # 安装Docker
-        sudo apt-get update
-        sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-        
-        # 验证安装
-        sudo docker run hello-world
-        
-    - name: Download and convert rules
+    - name: Generate rule files
       run: |
         # 创建规则目录
         mkdir -p rules
@@ -51,41 +29,28 @@ jobs:
           echo "📥 Downloading $url..."
           curl -s -o "${type}.yaml" "$url"
           
-          # 提取域名
-          echo "🔄 Extracting domains for ${type}..."
+          # 提取域名并生成中间文件
+          echo "🔄 Generating ${type}-domains.txt..."
           # 使用可靠的提取方法
-          grep -E "^  - '" "${type}.yaml" | sed "s/^  - '//;s/'$//" > "${type}.txt"
-          
-          # 确保文件不为空
-          if [ ! -s "${type}.txt" ]; then
-            echo "❌ Error: ${type}.txt is empty after extraction!"
-            echo "Original file preview:"
-            head -n 5 "${type}.yaml"
-            exit 1
-          fi
-          
-          # 确保所有域名都有通配符
-          awk '{
-            if ($0 !~ /^\*/) {
-              print "*." $0
-            } else {
-              print $0
-            }
-          }' "${type}.txt" > "${type}-processed.txt"
-          
-          echo "First 3 domains:"
-          head -3 "${type}-processed.txt"
-          
-          # 使用 Docker Hub 上的 Mihomo 镜像
-          echo "⚙️ Generating MRS for ${type}..."
-          sudo docker run --rm -v $(pwd):/data metacubex/mihomo:alpha \
-            rule-set -format text -o "/data/rules/${type}.mrs" "/data/${type}-processed.txt"
+          grep -E "^  - '" "${type}.yaml" | sed "s/^  - '//;s/'$//" | \
+            awk '{
+              # 确保通配符格式
+              if ($0 ~ /^\*\./) {
+                print $0
+              } else if ($0 ~ /^\./) {
+                print "*" $0
+              } else {
+                print "*." $0
+              }
+            }' > "rules/${type}-domains.txt"
             
-          echo "✅ Generated optimized ${type}.mrs"
+          echo "✅ Generated rules/${type}-domains.txt"
+          echo "First 3 domains:"
+          head -3 "rules/${type}-domains.txt"
         done
         
         # 清理临时文件
-        rm -f *.yaml *.txt
+        rm -f *.yaml
 
     - name: Commit and push changes
       run: |
@@ -95,14 +60,14 @@ jobs:
         if git diff-index --quiet HEAD --; then
           echo "🟢 No changes to commit"
         else
-          git commit -m "🤖 Update optimized MRS rules: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          git commit -m "🤖 Update rule files: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           git push
-          echo "🚀 Pushed optimized rules to repository"
+          echo "🚀 Pushed rule files to repository"
         fi
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: mrs-rules
+        name: rule-files
         path: rules/
         retention-days: 3
