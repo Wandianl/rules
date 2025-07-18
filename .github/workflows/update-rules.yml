@@ -1,4 +1,4 @@
-name: Update Clash Rules to MRS Format
+name: Generate Optimized MRS Rules
 
 on:
   schedule:
@@ -6,75 +6,73 @@ on:
   workflow_dispatch:     # 允许手动触发
   push:
     branches:
-      - main            # 主分支更新时也触发
+      - main
 
 jobs:
-  convert-and-publish:
+  generate-mrs-rules:
     runs-on: ubuntu-latest
+    container: ghcr.io/metacubex/mihomo:alpha
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Fetch and convert rules
+    - name: Prepare environment
       run: |
+        mkdir -p rules
+        chmod 777 rules
+        
+    - name: Download and convert rules
+      run: |
+        # 安装必要工具
+        apk add --no-cache curl jq
+        
         # 定义规则类型
         types=("direct" "proxy" "reject")
         
-        # 处理每个规则文件
         for type in "${types[@]}"; do
+          # 下载原始规则
           url="https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${type}.txt"
-          output_file="${type}.mrs"
+          curl -s -o "${type}.yaml" "$url"
           
-          echo "📥 Downloading ${type}.txt..."
-          curl -s -o "${type}.txt" "$url"
-          
-          echo "🔄 Converting to ${output_file}..."
-          # 生成文件头部
-          echo "payload:" > "$output_file"
-          echo "# Converted from ${url}" >> "$output_file"
-          echo "# Generated on $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$output_file"
-          echo "" >> "$output_file"
-          
-          # 正确提取域名并转换为YAML格式
-          grep -E "^  - '[^']+'" "${type}.txt" | \
-          sed "s/^  - '//;s/'$//" | \
-          awk '{
-            # 确保每个域名都转换为通配符格式
-            if ($0 ~ /^\*/) {
-              domain = $0
-            } else {
-              domain = "*." $0
-            }
-            # 输出为YAML格式
-            print "  - \x27" domain "\x27"
-          }' >> "$output_file"
-          
-          echo "✅ ${type}.txt converted to ${output_file}"
-          echo "📋 First 5 lines:"
-          head -7 "$output_file"  # 显示头部和部分内容
-          echo ""
+          # 提取域名并生成中间文件
+          grep -E "^  - '[^']+'" "${type}.yaml" | \
+            sed "s/^  - '//;s/'$//" | \
+            awk '{
+              if ($0 ~ /^\*/) {print $0}
+              else {print "*." $0}
+            }' > "${type}.txt"
+            
+          # 使用 Mihomo Meta 原生工具生成 MRS
+          mihomo rule-set \
+            -format text \
+            -o "rules/${type}.mrs" \
+            "${type}.txt"
+            
+          echo "✅ Generated optimized ${type}.mrs"
         done
         
         # 清理临时文件
-        rm -f direct.txt proxy.txt reject.txt
+        rm -f direct.* proxy.* reject.*
+        
+        # 验证 MRS 文件
+        echo "🔍 Validating MRS files:"
+        file rules/*.mrs
 
     - name: Commit and push changes
       run: |
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
-        git add *.mrs
+        git add rules/
         if git diff-index --quiet HEAD --; then
           echo "🟢 No changes to commit"
         else
-          git commit -m "🤖 Update rules: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          git commit -m "🤖 Update optimized MRS rules: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           git push
-          echo "🚀 Pushed updated rules to repository"
+          echo "🚀 Pushed optimized rules to repository"
         fi
 
-    - name: Show generated files
-      run: |
-        echo "📂 Generated files in root directory:"
-        ls -lh *.mrs
-        echo ""
-        echo "📝 proxy.mrs preview:"
-        head -10 proxy.mrs
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: mrs-rules
+        path: rules/
