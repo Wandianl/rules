@@ -23,7 +23,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y jq file
+        sudo apt-get install -y jq file wget
         
     - name: Detect architecture
       id: detect-arch
@@ -42,13 +42,23 @@ jobs:
         LATEST_RELEASE=$(curl -sL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.tag_name')
         echo "Latest release: $LATEST_RELEASE"
         
-        # 构建下载URL
-        DL_URL="https://github.com/MetaCubeX/mihomo/releases/download/$LATEST_RELEASE/mihomo-linux-${{ env.ARCH }}"
+        # 构建正确的下载URL
+        DL_URL="https://github.com/MetaCubeX/mihomo/releases/download/$LATEST_RELEASE/mihomo-linux-${{ env.ARCH }}.gz"
         echo "Download URL: $DL_URL"
         
-        # 下载 Mihomo
-        curl -sL "$DL_URL" -o bin/mihomo
+        # 下载并解压
+        wget -q "$DL_URL" -O bin/mihomo.gz
+        
+        # 验证文件类型
+        file bin/mihomo.gz || true
+        
+        # 解压
+        gzip -d bin/mihomo.gz || { echo "Failed to decompress file. Content:"; head bin/mihomo.gz; exit 1; }
         chmod +x bin/mihomo
+        
+        # 验证可执行文件
+        echo "File type after decompression:"
+        file bin/mihomo
         
         # 添加到 PATH
         echo "$(pwd)/bin" >> $GITHUB_PATH
@@ -68,9 +78,8 @@ jobs:
           
           # 提取域名并生成中间文件
           echo "🔄 Processing ${type} rules..."
-          # 更健壮的域名提取
-          grep -E "^  - '[^']+'" "${type}.yaml" | \
-            awk -F"'" '{print $2}' | \
+          # 使用更可靠的提取方法
+          awk -F"'" '/^  - '\''/ {print $2}' "${type}.yaml" | \
             awk '{
               # 处理通配符
               if ($0 ~ /^\*\./) {
@@ -88,9 +97,21 @@ jobs:
             
           # 检查文件是否为空
           if [ ! -s "${type}.txt" ]; then
-            echo "⚠️ Error: ${type}.txt is empty!"
+            echo "⚠️ Error: ${type}.txt is empty! Trying alternative extraction..."
+            # 备用提取方法
+            grep -E "^  - '" "${type}.yaml" | sed "s/^  - '//;s/'$//" > "${type}.txt"
+          fi
+            
+          # 检查文件是否仍然为空
+          if [ ! -s "${type}.txt" ]; then
+            echo "❌ Critical error: ${type}.txt is empty after all extraction attempts"
+            echo "File content preview:"
+            head "${type}.yaml"
             exit 1
           fi
+            
+          echo "First 3 domains:"
+          head -3 "${type}.txt"
             
           # 使用 Mihomo Meta 原生工具生成 MRS
           echo "⚙️ Generating MRS for ${type}..."
@@ -102,8 +123,6 @@ jobs:
           echo "✅ Generated optimized ${type}.mrs"
           # 显示生成的MRS文件信息
           file "rules/${type}.mrs"
-          echo "First 3 lines:"
-          head -3 "${type}.txt"
         done
         
         # 清理临时文件
