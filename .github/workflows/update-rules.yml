@@ -11,20 +11,33 @@ on:
 jobs:
   generate-mrs-rules:
     runs-on: ubuntu-latest
-    container: ghcr.io/metacubex/mihomo:alpha
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Prepare environment
+    - name: Setup environment
       run: |
         mkdir -p rules
-        chmod 777 rules
+        mkdir -p bin
         
+    - name: Download Mihomo Meta
+      run: |
+        # 获取最新版本的 Mihomo Meta
+        LATEST_RELEASE=$(curl -sL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | grep "tag_name" | cut -d '"' -f 4)
+        ARCH="linux-amd64"  # 根据您的运行器架构调整
+        
+        # 下载 Mihomo Meta
+        curl -sLo bin/mihomo "https://github.com/MetaCubeX/mihomo/releases/download/$LATEST_RELEASE/mihomo-$ARCH"
+        chmod +x bin/mihomo
+        
+        # 添加到 PATH
+        echo "$(pwd)/bin" >> $GITHUB_PATH
+
     - name: Download and convert rules
       run: |
         # 安装必要工具
-        apk add --no-cache curl jq
+        sudo apt-get update
+        sudo apt-get install -y jq file
         
         # 定义规则类型
         types=("direct" "proxy" "reject")
@@ -72,7 +85,8 @@ jobs:
         fi
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4  # 升级到 v4
       with:
         name: mrs-rules
         path: rules/
+        retention-days: 3  # 只保留最近3天的产物
