@@ -38,26 +38,25 @@ jobs:
           echo "# Generated on $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$output_file"
           echo "" >> "$output_file"
           
-          # 正确提取域名并转换格式
+          # 正确提取域名并转换为纯通配符格式
           grep -E "^  - '[^']+'" "${type}.txt" | \
           sed "s/^  - '//;s/'$//" | \
-          awk -v policy="${rules[$type]}" '{
-            # 添加通配符前缀
-            if ($0 ~ /^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$/) {
-              # 根域名
-              print "  - \"" $0 "\" # " policy
-            } else if ($0 ~ /^[a-zA-Z0-9-]+\.[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$/) {
-              # 多级子域名
-              print "  - \"+." $0 "\" # " policy
-            } else {
-              # 普通域名
-              print "  - \"+" $0 "\" # " policy
+          awk '{
+            # 确保每个域名都转换为通配符格式
+            domain = $0
+            # 如果域名以通配符开头，保持原样
+            if (domain ~ /^\*/) {
+              print domain
+            }
+            # 否则添加 *. 前缀
+            else {
+              print "*." domain
             }
           }' >> "$output_file"
           
           echo "✅ ${type}.txt converted to ${output_file}"
-          echo "📋 First 3 lines:"
-          head -3 "$output_file"
+          echo "📋 First 5 lines:"
+          head -5 "$output_file"
           echo ""
         done
         
