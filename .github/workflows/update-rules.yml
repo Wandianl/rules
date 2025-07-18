@@ -20,34 +20,50 @@ jobs:
         mkdir -p rules
         mkdir -p bin
         
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq file unzip
+        
     - name: Download Mihomo Meta
       run: |
         # 获取最新版本的 Mihomo Meta
-        LATEST_RELEASE=$(curl -sL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | grep "tag_name" | cut -d '"' -f 4)
+        LATEST_RELEASE=$(curl -sL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.tag_name')
+        echo "Latest release: $LATEST_RELEASE"
         ARCH="linux-amd64"  # 根据您的运行器架构调整
         
-        # 下载 Mihomo Meta
-        curl -sLo bin/mihomo "https://github.com/MetaCubeX/mihomo/releases/download/$LATEST_RELEASE/mihomo-$ARCH"
-        chmod +x bin/mihomo
+        # 下载 Mihomo Meta (使用压缩包格式)
+        curl -sL "https://github.com/MetaCubeX/mihomo/releases/download/$LATEST_RELEASE/mihomo-$ARCH.zip" -o bin/mihomo.zip
+        unzip bin/mihomo.zip -d bin/
+        rm bin/mihomo.zip
+        
+        # 确保可执行文件存在并添加权限
+        if [ -f "bin/mihomo" ]; then
+          chmod +x bin/mihomo
+        else
+          # 尝试查找解压后的文件
+          find bin/ -type f -executable -exec mv {} bin/mihomo \;
+          chmod +x bin/mihomo
+        fi
         
         # 添加到 PATH
         echo "$(pwd)/bin" >> $GITHUB_PATH
+        echo "Mihomo version:"
+        bin/mihomo -v
 
     - name: Download and convert rules
       run: |
-        # 安装必要工具
-        sudo apt-get update
-        sudo apt-get install -y jq file
-        
         # 定义规则类型
         types=("direct" "proxy" "reject")
         
         for type in "${types[@]}"; do
           # 下载原始规则
           url="https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${type}.txt"
+          echo "📥 Downloading $url..."
           curl -s -o "${type}.yaml" "$url"
           
           # 提取域名并生成中间文件
+          echo "🔄 Processing ${type} rules..."
           grep -E "^  - '[^']+'" "${type}.yaml" | \
             sed "s/^  - '//;s/'$//" | \
             awk '{
@@ -56,20 +72,19 @@ jobs:
             }' > "${type}.txt"
             
           # 使用 Mihomo Meta 原生工具生成 MRS
-          mihomo rule-set \
+          echo "⚙️ Generating MRS for ${type}..."
+          bin/mihomo rule-set \
             -format text \
             -o "rules/${type}.mrs" \
             "${type}.txt"
             
           echo "✅ Generated optimized ${type}.mrs"
+          # 显示生成的MRS文件信息
+          file "rules/${type}.mrs"
         done
         
         # 清理临时文件
         rm -f direct.* proxy.* reject.*
-        
-        # 验证 MRS 文件
-        echo "🔍 Validating MRS files:"
-        file rules/*.mrs
 
     - name: Commit and push changes
       run: |
@@ -85,8 +100,8 @@ jobs:
         fi
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4  # 升级到 v4
+      uses: actions/upload-artifact@v4
       with:
         name: mrs-rules
         path: rules/
-        retention-days: 3  # 只保留最近3天的产物
+        retention-days: 3
