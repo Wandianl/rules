@@ -1,0 +1,166 @@
+name: Convert Rules to Mihomo Binary
+
+on:
+  schedule:
+    # 每天凌晨2点运行
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # 手动触发
+  push:
+    branches: [ main ]
+
+jobs:
+  convert-rules:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+        
+    - name: Install mihomo
+      run: |
+        # 下载最新版本的mihomo
+        wget -O mihomo.tar.gz https://github.com/MetaCubeX/mihomo/releases/latest/download/mihomo-linux-amd64-v1.18.0.tar.gz
+        tar -xzf mihomo.tar.gz
+        chmod +x mihomo-linux-amd64-v1.18.0
+        sudo mv mihomo-linux-amd64-v1.18.0 /usr/local/bin/mihomo
+        
+    - name: Download rule files
+      run: |
+        mkdir -p rules
+        # 下载规则文件
+        wget -O rules/direct.txt https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt
+        wget -O rules/proxy.txt https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt
+        wget -O rules/reject.txt https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt
+        
+    - name: Convert to binary format
+      run: |
+        mkdir -p output
+        
+        # 转换每个规则文件为二进制格式
+        echo "Converting direct.txt to binary..."
+        mihomo convert-ruleset domain text ./rules/direct.txt ./output/direct.mrs
+        
+        echo "Converting proxy.txt to binary..."
+        mihomo convert-ruleset domain text ./rules/proxy.txt ./output/proxy.mrs
+        
+        echo "Converting reject.txt to binary..."
+        mihomo convert-ruleset domain text ./rules/reject.txt ./output/reject.mrs
+        
+        # 显示生成的文件信息
+        ls -la output/
+        
+    - name: Generate metadata
+      run: |
+        # 生成元数据文件
+        cat > output/metadata.json << EOF
+        {
+          "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "source_urls": [
+            "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt",
+            "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt",
+            "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt"
+          ],
+          "files": [
+            {
+              "name": "direct.mrs",
+              "type": "mihomo_ruleset",
+              "description": "Direct connection rules in binary format"
+            },
+            {
+              "name": "proxy.mrs", 
+              "type": "mihomo_ruleset",
+              "description": "Proxy connection rules in binary format"
+            },
+            {
+              "name": "reject.mrs",
+              "type": "mihomo_ruleset",
+              "description": "Reject/block rules in binary format"
+            }
+          ]
+        }
+        EOF
+        
+    - name: Create release
+      uses: softprops/action-gh-release@v1
+      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+      with:
+        tag_name: v${{ github.run_number }}
+        name: Mihomo Rules Binary v${{ github.run_number }}
+        body: |
+          ## Mihomo Binary Rules
+          
+          This release contains converted binary rule files for mihomo.
+          
+          **Generated at:** ${{ steps.date.outputs.date }}
+          
+          **Source Files:**
+          - `direct.mrs` - Direct connection rules
+          - `proxy.mrs` - Proxy connection rules  
+          - `reject.mrs` - Reject/block rules
+          
+          **Usage in mihomo config:**
+          ```yaml
+          rule-providers:
+            direct:
+              type: http
+              behavior: domain
+              format: mrs
+              url: https://github.com/${{ github.repository }}/releases/latest/download/direct.mrs
+              interval: 86400
+            proxy:
+              type: http
+              behavior: domain
+              format: mrs
+              url: https://github.com/${{ github.repository }}/releases/latest/download/proxy.mrs
+              interval: 86400
+            reject:
+              type: http
+              behavior: domain
+              format: mrs
+              url: https://github.com/${{ github.repository }}/releases/latest/download/reject.mrs
+              interval: 86400
+          
+          rules:
+            - RULE-SET,reject,REJECT
+            - RULE-SET,direct,DIRECT
+            - RULE-SET,proxy,PROXY
+          ```
+        files: |
+          output/direct.mrs
+          output/proxy.mrs
+          output/reject.mrs
+          output/metadata.json
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mihomo-rules-binary
+        path: output/
+        retention-days: 30
+        
+    - name: Commit and push if changed
+      run: |
+        git config --global user.email "action@github.com"
+        git config --global user.name "GitHub Action"
+        
+        # 将二进制文件提交到仓库（可选）
+        cp output/*.mrs ./ 2>/dev/null || true
+        cp output/metadata.json ./ 2>/dev/null || true
+        
+        if [ -n "$(git status --porcelain)" ]; then
+          git add *.mrs metadata.json
+          git commit -m "Update mihomo binary rules - $(date -u +%Y-%m-%d)"
+          git push
+        else
+          echo "No changes to commit"
+        fi
