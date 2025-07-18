@@ -23,28 +23,37 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y jq file gzip
+        sudo apt-get install -y jq file
+        
+    - name: Detect architecture
+      id: detect-arch
+      run: |
+        ARCH=$(uname -m)
+        case $ARCH in
+          x86_64) echo "ARCH=amd64" >> $GITHUB_ENV ;;
+          aarch64) echo "ARCH=arm64" >> $GITHUB_ENV ;;
+          *) echo "Unsupported architecture: $ARCH" && exit 1 ;;
+        esac
+        echo "Detected architecture: $ARCH"
         
     - name: Download Mihomo Meta
       run: |
         # 获取最新版本的 Mihomo Meta
         LATEST_RELEASE=$(curl -sL https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r '.tag_name')
         echo "Latest release: $LATEST_RELEASE"
-        ARCH="linux-amd64"  # 根据您的运行器架构调整
         
-        # 下载 Mihomo Meta (使用 gz 格式)
-        DL_URL="https://github.com/MetaCubeX/mihomo/releases/download/$LATEST_RELEASE/mihomo-$ARCH.gz"
+        # 构建下载URL
+        DL_URL="https://github.com/MetaCubeX/mihomo/releases/download/$LATEST_RELEASE/mihomo-linux-${{ env.ARCH }}"
         echo "Download URL: $DL_URL"
         
-        # 下载并解压
-        curl -sL "$DL_URL" -o bin/mihomo.gz
-        gzip -d bin/mihomo.gz
+        # 下载 Mihomo
+        curl -sL "$DL_URL" -o bin/mihomo
         chmod +x bin/mihomo
         
         # 添加到 PATH
         echo "$(pwd)/bin" >> $GITHUB_PATH
         echo "Mihomo version:"
-        bin/mihomo -v || true  # 某些版本可能不支持 -v 参数
+        bin/mihomo -v || echo "Version check not supported"
 
     - name: Download and convert rules
       run: |
@@ -59,19 +68,28 @@ jobs:
           
           # 提取域名并生成中间文件
           echo "🔄 Processing ${type} rules..."
+          # 更健壮的域名提取
           grep -E "^  - '[^']+'" "${type}.yaml" | \
-            sed "s/^  - '//;s/'$//" | \
+            awk -F"'" '{print $2}' | \
             awk '{
-              if ($0 ~ /^\*/) {print $0}
-              else {print "*." $0}
+              # 处理通配符
+              if ($0 ~ /^\*\./) {
+                print $0
+              } else if ($0 ~ /^\./) {
+                print "*" $0
+              } else if ($0 ~ /^[a-zA-Z0-9.-]+$/) {
+                print "*." $0
+              } else {
+                # 处理特殊格式
+                gsub(/^['\''"]|['\''"]$/, "", $0)
+                print "*." $0
+              }
             }' > "${type}.txt"
             
-          # 检查是否成功提取域名
+          # 检查文件是否为空
           if [ ! -s "${type}.txt" ]; then
-            echo "⚠️ Warning: No domains extracted for ${type}.txt. Using alternative extraction method."
-            # 备用提取方法
-            grep -E "^  - '[^']+'" "${type}.yaml" | \
-              awk -F\' '{print $2}' > "${type}.txt"
+            echo "⚠️ Error: ${type}.txt is empty!"
+            exit 1
           fi
             
           # 使用 Mihomo Meta 原生工具生成 MRS
@@ -84,6 +102,8 @@ jobs:
           echo "✅ Generated optimized ${type}.mrs"
           # 显示生成的MRS文件信息
           file "rules/${type}.mrs"
+          echo "First 3 lines:"
+          head -3 "${type}.txt"
         done
         
         # 清理临时文件
