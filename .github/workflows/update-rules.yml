@@ -1,0 +1,33 @@
+name: Update Clash Rules
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 每天自动运行
+  workflow_dispatch:     # 手动触发
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rules: 
+          - { src: direct.txt, dest: direct.mrs }  # 直接保存到根目录
+          - { src: proxy.txt, dest: proxy.mrs }
+          - { src: reject.txt, dest: reject.mrs }
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Convert rules
+      run: |
+        curl -s "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${{ matrix.rules.src }}" | \
+        grep -v '^#' | \
+        awk 'NF {print "domain:" $0}' > ${{ matrix.rules.dest }}
+
+    - name: Commit and push changes
+      if: matrix.rules.src == 'reject.txt'
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        git add *.mrs  # 添加根目录下的 .mrs 文件
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Update rules" && git push)
