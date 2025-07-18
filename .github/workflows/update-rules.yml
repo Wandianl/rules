@@ -23,7 +23,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y jq file unzip
+        sudo apt-get install -y jq file gzip
         
     - name: Download Mihomo Meta
       run: |
@@ -32,24 +32,19 @@ jobs:
         echo "Latest release: $LATEST_RELEASE"
         ARCH="linux-amd64"  # 根据您的运行器架构调整
         
-        # 下载 Mihomo Meta (使用压缩包格式)
-        curl -sL "https://github.com/MetaCubeX/mihomo/releases/download/$LATEST_RELEASE/mihomo-$ARCH.zip" -o bin/mihomo.zip
-        unzip bin/mihomo.zip -d bin/
-        rm bin/mihomo.zip
+        # 下载 Mihomo Meta (使用 gz 格式)
+        DL_URL="https://github.com/MetaCubeX/mihomo/releases/download/$LATEST_RELEASE/mihomo-$ARCH.gz"
+        echo "Download URL: $DL_URL"
         
-        # 确保可执行文件存在并添加权限
-        if [ -f "bin/mihomo" ]; then
-          chmod +x bin/mihomo
-        else
-          # 尝试查找解压后的文件
-          find bin/ -type f -executable -exec mv {} bin/mihomo \;
-          chmod +x bin/mihomo
-        fi
+        # 下载并解压
+        curl -sL "$DL_URL" -o bin/mihomo.gz
+        gzip -d bin/mihomo.gz
+        chmod +x bin/mihomo
         
         # 添加到 PATH
         echo "$(pwd)/bin" >> $GITHUB_PATH
         echo "Mihomo version:"
-        bin/mihomo -v
+        bin/mihomo -v || true  # 某些版本可能不支持 -v 参数
 
     - name: Download and convert rules
       run: |
@@ -70,6 +65,14 @@ jobs:
               if ($0 ~ /^\*/) {print $0}
               else {print "*." $0}
             }' > "${type}.txt"
+            
+          # 检查是否成功提取域名
+          if [ ! -s "${type}.txt" ]; then
+            echo "⚠️ Warning: No domains extracted for ${type}.txt. Using alternative extraction method."
+            # 备用提取方法
+            grep -E "^  - '[^']+'" "${type}.yaml" | \
+              awk -F\' '{print $2}' > "${type}.txt"
+          fi
             
           # 使用 Mihomo Meta 原生工具生成 MRS
           echo "⚙️ Generating MRS for ${type}..."
