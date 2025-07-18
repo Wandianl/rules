@@ -23,6 +23,8 @@ jobs:
         curl -s "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${{ matrix.rules.src }}" | \
         grep -v '^#' | \
         awk 'NF {print "domain:" $0}' > ${{ matrix.rules.dest }}
+        
+        echo "# Last updated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> ${{ matrix.rules.dest }} 
 
     - name: Commit and push changes
       if: matrix.rules.src == 'reject.txt'  
