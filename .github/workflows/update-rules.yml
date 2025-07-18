@@ -1,9 +1,9 @@
-name: Rules
+name: Update MRS Rules
 
 on:
   schedule:
     - cron: '0 0 * * *'  # 每天UTC 0点自动运行
-  workflow_dispatch:      # 支持手动触发
+  workflow_dispatch:     # 支持手动触发
 
 jobs:
   convert:
@@ -18,50 +18,67 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0
+        fetch-depth: 0  # 关键修复：拉取完整历史
 
     - name: Convert to MRS Format
       run: |
-        # 下载源文件
-        curl -s "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${{ matrix.rulesets.src }}" -o source.tmp
+        # 下载源文件（带重试机制）
+        for i in {1..3}; do
+          if curl -s "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${{ matrix.rulesets.src }}" -o source.tmp; then
+            break
+          elif [ $i -eq 3 ]; then
+            echo "❌ 无法下载源文件" > ${{ matrix.rulesets.dest }}
+            exit 1
+          fi
+          sleep 5
+        done
 
-        # 转换为标准.mrs格式（保留通配符）
+        # 严格过滤有效规则
         awk '
         BEGIN {
           print "#MRS-RULES-V1"
-          print "# Generated at: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          print "# Generated at: $(date -u +'"'"'%Y-%m-%dT%H:%M:%SZ'"'"')"
         }
-        /^[^#]/ && NF {
-          # 保留原始通配符格式
+        /^[^#]/ && $0 !~ /^[[:space:]]*$/ {
+          # 清理YAML格式符号（如 - 'example.com'）
+          gsub(/^[[:space:]]*-[[:space:]]*'"'"'?|'"'"'?$/, "", $0)
           if ($0 ~ /^\*\./) {
-            print "domain-wildcard:" $0
+            print "domain-wildcard:" substr($0, 3)
+            cnt++
           }
-          # 普通域名
-          else if ($0 ~ /^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$/) {
+          else if ($0 ~ /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/) {
             print "domain:" $0
+            cnt++
           }
-          # IP规则
-          else if ($0 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) {
-            print "ip:" $0
+        }
+        END {
+          print "# Total rules: " cnt
+          if (cnt == 0) {
+            print "⚠️ 警告：未检测到有效规则" > "/dev/stderr"
+            print "# 原始文件样例：" 
+            system("head -n 10 source.tmp | sed '"'"'s/^/# /'"'"'")
           }
         }
         ' source.tmp > ${{ matrix.rulesets.dest }}
-
-        # 添加规则统计
-        echo "# Total rules: $(grep -c '^domain\|^ip' ${{ matrix.rulesets.dest }})" >> ${{ matrix.rulesets.dest }}
         rm source.tmp
 
     - name: Commit changes
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
+        # 配置Git身份
         git config --global user.name "mrs-generator-bot"
         git config --global user.email "mrs-generator@users.noreply.github.com"
-        
+
+        # 强制同步远程分支（关键修复）
+        git fetch origin main
+        git reset --hard origin/main
+
+        # 添加并提交变更
         git add *.mrs
         if ! git diff --quiet --staged; then
           git commit -m "Update MRS rules [auto]"
-          git push origin main
+          git push --force-with-lease origin main
         else
-          echo "⚠️ No changes detected"
+          echo "⚠️ 无变更，跳过提交"
         fi
