@@ -57,71 +57,131 @@ jobs:
         # 验证安装 - 只检查版本，不启动服务
         timeout 10s mihomo -v || mihomo --version || echo "Version check completed"
         
-    - name: Download rule files
+    - name: Setup rules configuration
       run: |
-        mkdir -p rules
-        # 下载规则文件
-        wget -O rules/direct.txt https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt
-        wget -O rules/proxy.txt https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt
-        wget -O rules/reject.txt https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt
+        # 创建规则配置文件，方便添加新的规则集
+        cat > rules_config.txt << 'EOF'
+        # 规则集配置文件
+        # 格式: 规则名称|下载URL|输出文件名
+        # 一行一个规则集，使用 # 开头的行为注释
         
-    - name: Convert to binary format
+        # Loyalsoldier 规则集
+        direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt|direct.mrs
+        proxy|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt|proxy.mrs
+        reject|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt|reject.mrs
+        
+        # 可以添加更多规则集，例如：
+        # private|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/private.txt|private.mrs
+        # gfw|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt|gfw.mrs
+        # greatfire|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/greatfire.txt|greatfire.mrs
+        # tld-not-cn|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/tld-not-cn.txt|tld-not-cn.mrs
+        # telegramcidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/telegramcidr.txt|telegramcidr.mrs
+        # cncidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt|cncidr.mrs
+        # lancidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/lancidr.txt|lancidr.mrs
+        # applications|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt|applications.mrs
+        EOF
+        
+    - name: Download and convert rules
       run: |
-        mkdir -p output
+        mkdir -p rules output
         
-        # 转换每个规则文件为二进制格式
-        echo "Converting direct.txt to binary..."
-        timeout 60s mihomo convert-ruleset domain text ./rules/direct.txt ./output/direct.mrs
-        
-        echo "Converting proxy.txt to binary..."
-        timeout 60s mihomo convert-ruleset domain text ./rules/proxy.txt ./output/proxy.mrs
-        
-        echo "Converting reject.txt to binary..."
-        timeout 60s mihomo convert-ruleset domain text ./rules/reject.txt ./output/reject.mrs
-        
-        # 显示生成的文件信息
-        ls -la output/
-        
-        # 验证生成的文件
-        echo "Verifying generated files..."
-        for file in output/*.mrs; do
-          if [ -f "$file" ]; then
-            echo "✓ $(basename "$file"): $(stat -c%s "$file") bytes"
+        # 读取规则配置文件并处理每个规则集
+        while IFS='|' read -r name url output_file; do
+          # 跳过注释行和空行
+          if [[ "$name" =~ ^#.* ]] || [[ -z "$name" ]]; then
+            continue
+          fi
+          
+          echo "Processing rule: $name"
+          echo "  URL: $url"
+          echo "  Output: $output_file"
+          
+          # 下载规则文件
+          if wget -O "rules/${name}.txt" "$url"; then
+            echo "  ✓ Downloaded successfully"
+            
+            # 转换为二进制格式
+            if timeout 60s mihomo convert-ruleset domain text "rules/${name}.txt" "output/${output_file}"; then
+              echo "  ✓ Converted to binary format"
+              
+              # 验证生成的文件
+              if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
+                echo "  ✓ File verified: $(stat -c%s "output/${output_file}") bytes"
+              else
+                echo "  ✗ Generated file is empty or missing"
+                exit 1
+              fi
+            else
+              echo "  ✗ Conversion failed"
+              exit 1
+            fi
           else
-            echo "✗ Failed to generate $(basename "$file")"
+            echo "  ✗ Download failed"
             exit 1
           fi
-        done
+          echo ""
+        done < rules_config.txt
         
-    - name: Generate metadata
+        # 显示所有生成的文件
+        echo "Generated files:"
+        ls -la output/
+        
+    - name: Generate usage documentation
       run: |
-        # 生成元数据文件
-        cat > output/metadata.json << EOF
-        {
-          "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-          "source_urls": [
-            "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt",
-            "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt",
-            "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt"
-          ],
-          "files": [
-            {
-              "name": "direct.mrs",
-              "type": "mihomo_ruleset",
-              "description": "Direct connection rules in binary format"
-            },
-            {
-              "name": "proxy.mrs", 
-              "type": "mihomo_ruleset",
-              "description": "Proxy connection rules in binary format"
-            },
-            {
-              "name": "reject.mrs",
-              "type": "mihomo_ruleset",
-              "description": "Reject/block rules in binary format"
-            }
-          ]
-        }
+        # 生成使用说明
+        cat > output/README.md << 'EOF'
+        # Mihomo Binary Rules
+        
+        Generated at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+        
+        ## Available Rule Sets
+        
+        EOF
+        
+        # 动态生成规则集列表
+        echo "| File | Description |" >> output/README.md
+        echo "|------|-------------|" >> output/README.md
+        
+        while IFS='|' read -r name url output_file; do
+          if [[ "$name" =~ ^#.* ]] || [[ -z "$name" ]]; then
+            continue
+          fi
+          if [ -f "output/${output_file}" ]; then
+            echo "| ${output_file} | ${name} rules |" >> output/README.md
+          fi
+        done < rules_config.txt
+        
+        # 添加使用说明
+        cat >> output/README.md << 'EOF'
+        
+        ## Usage in mihomo config
+        
+        ```yaml
+        rule-providers:
+          direct:
+            type: http
+            behavior: domain
+            format: mrs
+            url: https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/direct.mrs
+            interval: 86400
+          proxy:
+            type: http
+            behavior: domain
+            format: mrs
+            url: https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/proxy.mrs
+            interval: 86400
+          reject:
+            type: http
+            behavior: domain
+            format: mrs
+            url: https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/reject.mrs
+            interval: 86400
+        
+        rules:
+          - RULE-SET,reject,REJECT
+          - RULE-SET,direct,DIRECT
+          - RULE-SET,proxy,PROXY
+        ```
         EOF
         
     - name: Create release
@@ -135,45 +195,12 @@ jobs:
           
           This release contains converted binary rule files for mihomo.
           
-          **Generated at:** ${{ steps.date.outputs.date }}
+          **Generated at:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
           
-          **Source Files:**
-          - `direct.mrs` - Direct connection rules
-          - `proxy.mrs` - Proxy connection rules  
-          - `reject.mrs` - Reject/block rules
-          
-          **Usage in mihomo config:**
-          ```yaml
-          rule-providers:
-            direct:
-              type: http
-              behavior: domain
-              format: mrs
-              url: https://github.com/${{ github.repository }}/releases/latest/download/direct.mrs
-              interval: 86400
-            proxy:
-              type: http
-              behavior: domain
-              format: mrs
-              url: https://github.com/${{ github.repository }}/releases/latest/download/proxy.mrs
-              interval: 86400
-            reject:
-              type: http
-              behavior: domain
-              format: mrs
-              url: https://github.com/${{ github.repository }}/releases/latest/download/reject.mrs
-              interval: 86400
-          
-          rules:
-            - RULE-SET,reject,REJECT
-            - RULE-SET,direct,DIRECT
-            - RULE-SET,proxy,PROXY
-          ```
+          See README.md for detailed usage instructions.
         files: |
-          output/direct.mrs
-          output/proxy.mrs
-          output/reject.mrs
-          output/metadata.json
+          output/*.mrs
+          output/README.md
         draft: false
         prerelease: false
       env:
@@ -193,10 +220,10 @@ jobs:
         
         # 将二进制文件提交到仓库（可选）
         cp output/*.mrs ./ 2>/dev/null || true
-        cp output/metadata.json ./ 2>/dev/null || true
+        cp output/README.md ./ 2>/dev/null || true
         
         if [ -n "$(git status --porcelain)" ]; then
-          git add *.mrs metadata.json
+          git add *.mrs README.md rules_config.txt
           git commit -m "Update mihomo binary rules - $(date -u +%Y-%m-%d)"
           git push
         else
