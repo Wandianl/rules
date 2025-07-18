@@ -1,16 +1,16 @@
-name: Update Rules
+name: Rules
 
 on:
   schedule:
-    - cron: '0 0 * * *'  
-  workflow_dispatch:     
+    - cron: '0 0 * * *'  # 每天UTC 0点自动运行
+  workflow_dispatch:      # 支持手动触发
 
 jobs:
   convert:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rules: 
+        rulesets:
           - { src: direct.txt, dest: direct.mrs }
           - { src: proxy.txt, dest: proxy.mrs }
           - { src: reject.txt, dest: reject.mrs }
@@ -18,27 +18,50 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0 
+        fetch-depth: 0
 
-    - name: Convert rules
+    - name: Convert to MRS Format
       run: |
-        curl -s "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${{ matrix.rules.src }}" | \
-        grep -v '^#' | \
-        awk 'NF {print "domain:" $0}' > ${{ matrix.rules.dest }}
-        
-        echo "# Last updated: $(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> ${{ matrix.rules.dest }}
+        # 下载源文件
+        curl -s "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/${{ matrix.rulesets.src }}" -o source.tmp
 
-    - name: Commit and push changes
+        # 转换为标准.mrs格式（保留通配符）
+        awk '
+        BEGIN {
+          print "#MRS-RULES-V1"
+          print "# Generated at: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        }
+        /^[^#]/ && NF {
+          # 保留原始通配符格式
+          if ($0 ~ /^\*\./) {
+            print "domain-wildcard:" $0
+          }
+          # 普通域名
+          else if ($0 ~ /^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$/) {
+            print "domain:" $0
+          }
+          # IP规则
+          else if ($0 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) {
+            print "ip:" $0
+          }
+        }
+        ' source.tmp > ${{ matrix.rulesets.dest }}
+
+        # 添加规则统计
+        echo "# Total rules: $(grep -c '^domain\|^ip' ${{ matrix.rulesets.dest }})" >> ${{ matrix.rulesets.dest }}
+        rm source.tmp
+
+    - name: Commit changes
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-        git add ${{ matrix.rules.dest }}
-
-        git fetch origin main
-        git reset --hard origin/main
-
-        git commit -m "Update ${{ matrix.rules.dest }} [skip ci]" || echo "无变更"
-        git push --force "https://$GITHUB_TOKEN@github.com/${{ github.repository }}.git"
+        git config --global user.name "mrs-generator-bot"
+        git config --global user.email "mrs-generator@users.noreply.github.com"
+        
+        git add *.mrs
+        if ! git diff --quiet --staged; then
+          git commit -m "Update MRS rules [auto]"
+          git push origin main
+        else
+          echo "⚠️ No changes detected"
+        fi
