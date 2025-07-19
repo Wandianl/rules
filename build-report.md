@@ -1,6 +1,6 @@
 # Mihomo规则集构建报告
 
-**构建时间:** 2025-07-19 10:43:11 UTC
+**构建时间:** 2025-07-19 11:16:53 UTC
 **Mihomo版本:** 
 **触发方式:** push
 
@@ -19,31 +19,31 @@ rule-providers:
   direct-domain:
     type: http
     format: mrs
-    url: https://github.com/Wandianl/rules/releases/latest/download/direct-domain.mrs
+    url: https://github.com/Wandianl/rules/raw/main/direct-domain.mrs
     interval: 86400
 
   direct-ip:
     type: http
     format: mrs
-    url: https://github.com/Wandianl/rules/releases/latest/download/direct-ip.mrs
+    url: https://github.com/Wandianl/rules/raw/main/direct-ip.mrs
     interval: 86400
 
   proxy-domain:
     type: http
     format: mrs
-    url: https://github.com/Wandianl/rules/releases/latest/download/proxy-domain.mrs
+    url: https://github.com/Wandianl/rules/raw/main/proxy-domain.mrs
     interval: 86400
 
   proxy-ip:
     type: http
     format: mrs
-    url: https://github.com/Wandianl/rules/releases/latest/download/proxy-ip.mrs
+    url: https://github.com/Wandianl/rules/raw/main/proxy-ip.mrs
     interval: 86400
 
   reject-domain:
     type: http
     format: mrs
-    url: https://github.com/Wandianl/rules/releases/latest/download/reject-domain.mrs
+    url: https://github.com/Wandianl/rules/raw/main/reject-domain.mrs
     interval: 86400
 
 ```
