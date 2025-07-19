@@ -139,6 +139,10 @@ jobs:
         echo "已生成文件:"
         ls -la output/
         
+    - name: 获取当前日期
+      id: date
+      run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
+        
     - name: 创建发布版本
       uses: softprops/action-gh-release@v1
       if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -161,10 +165,6 @@ jobs:
         prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: 获取当前日期
-      id: date
-      run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
         
     - name: 上传产物
       uses: actions/upload-artifact@v4
