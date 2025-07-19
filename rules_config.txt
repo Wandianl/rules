@@ -1,18 +1,15 @@
 # 规则集配置文件
-# 格式: 规则名称|下载URL|输出文件名
-# 一行一个规则集，使用 # 开头的行为注释
+# 格式: 规则组名|下载URL|输出文件名
 
-# Loyalsoldier 规则集
+# 直连规则组
 direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt|direct.mrs
+direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt|direct.mrs
+direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/private.txt|direct.mrs
+
+# 代理规则组
 proxy|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt|proxy.mrs
+proxy|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt|proxy.mrs
+
+# 拒绝规则组
 reject|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt|reject.mrs
 
-# 可以添加更多规则集，例如：
-# private|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/private.txt|private.mrs
-# gfw|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt|gfw.mrs
-# greatfire|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/greatfire.txt|greatfire.mrs
-# tld-not-cn|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/tld-not-cn.txt|tld-not-cn.mrs
-# telegramcidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/telegramcidr.txt|telegramcidr.mrs
-# cncidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt|cncidr.mrs
-# lancidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/lancidr.txt|lancidr.mrs
-# applications|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt|applications.mrs
