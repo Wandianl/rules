@@ -1,633 +1,599 @@
-name: 转换规则为Mihomo二进制格式
+name: Mihomo规则集自动转换
 
 on:
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 2 * * *'  # 每日凌晨2点执行
   workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: '强制重新构建所有规则'
+        required: false
+        default: 'false'
+        type: boolean
   push:
     branches: [ main ]
+    paths: 
+      - 'rules_config.txt'
+      - '.github/workflows/convert-rules.yml'
+
+env:
+  MIHOMO_TIMEOUT: 120
+  GO_VERSION: '1.21'
+  RULES_DIR: 'rules'
+  OUTPUT_DIR: 'output'
+  CONFIG_FILE: 'rules_config.txt'
 
 jobs:
-  convert-rules:
+  validate-config:
+    name: 验证配置文件
     runs-on: ubuntu-latest
+    outputs:
+      config-valid: ${{ steps.validate.outputs.valid }}
+      rule-groups: ${{ steps.validate.outputs.groups }}
     
     steps:
     - name: 检出仓库
       uses: actions/checkout@v4
       
-    - name: 安装Go环境
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.21'
-        
-    - name: 安装Mihomo
+    - name: 验证配置文件
+      id: validate
       run: |
-        LATEST_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        echo "最新版本号: $LATEST_VERSION"
-        
-        echo "尝试下载mihomo二进制文件..."
-        
-        if wget -O mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${LATEST_VERSION}/mihomo-linux-amd64-compatible-${LATEST_VERSION}.gz" 2>/dev/null; then
-          echo "已下载兼容版本"
-          gzip -d mihomo.gz
-          chmod +x mihomo
-          sudo mv mihomo /usr/local/bin/mihomo
-        elif wget -O mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${LATEST_VERSION}/mihomo-linux-amd64-${LATEST_VERSION}.gz" 2>/dev/null; then
-          echo "已下载标准版本"
-          gzip -d mihomo.gz
-          chmod +x mihomo
-          sudo mv mihomo /usr/local/bin/mihomo
-        else
-          echo "直接下载失败，使用Docker提取二进制文件..."
-          docker pull metacubex/mihomo:latest
-          docker create --name mihomo_temp metacubex/mihomo:latest
-          docker cp mihomo_temp:/mihomo ./mihomo
-          docker rm mihomo_temp
-          chmod +x mihomo
-          sudo mv mihomo /usr/local/bin/mihomo
-        fi
-        
-        timeout 10s mihomo -v || mihomo --version || echo "版本检查完成"
-        
-    - name: 下载并转换规则
-      run: |
-        mkdir -p rules output
-        
-        # 检查配置文件是否存在
-        if [ ! -f "rules_config.txt" ]; then
-          echo "错误: rules_config.txt 配置文件不存在，请先创建配置文件"
-          echo "配置文件格式: 规则组名 规则类型 下载URL 输出文件名 (用空格分隔)"
+        if [ ! -f "$CONFIG_FILE" ]; then
+          echo "❌ 错误: $CONFIG_FILE 配置文件不存在"
+          echo "请创建配置文件，格式: 规则组名 规则类型 下载URL 输出文件名"
           echo "规则类型: domain(域名规则) 或 ipcidr(IP规则)"
+          echo "valid=false" >> $GITHUB_OUTPUT
           exit 1
         fi
         
-        # 按输出文件分组处理
-        declare -A rule_groups
+        echo "✅ 配置文件存在，开始验证格式..."
+        line_num=0
+        valid_lines=0
+        declare -A output_files
         declare -A rule_types
         
-        # 读取配置并分组
-        while read -r name rule_type url output_file; do
+        while IFS= read -r line || [ -n "$line" ]; do
+          line_num=$((line_num + 1))
+          
           # 跳过注释行和空行
-          if [[ "$name" =~ ^#.* ]] || [[ -z "$name" ]]; then
+          if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "${line// }" ]]; then
             continue
           fi
           
-          # 去除首尾空格
-          name=$(echo "$name" | xargs)
-          rule_type=$(echo "$rule_type" | xargs)
-          url=$(echo "$url" | xargs)
-          output_file=$(echo "$output_file" | xargs)
+          # 解析配置行
+          read -r name rule_type url output_file <<< "$line"
           
-          # 验证规则类型
-          if [[ "$rule_type" != "domain" && "$rule_type" != "ipcidr" ]]; then
-            echo "错误: 不支持的规则类型 '$rule_type'，只支持 'domain' 或 'ipcidr'"
+          if [ -z "$name" ] || [ -z "$rule_type" ] || [ -z "$url" ] || [ -z "$output_file" ]; then
+            echo "❌ 第 $line_num 行格式错误: $line"
+            echo "valid=false" >> $GITHUB_OUTPUT
             exit 1
           fi
           
-          # 检查同一输出文件的规则类型是否一致
+          # 验证规则类型
+          if [[ "$rule_type" != "domain" && "$rule_type" != "ipcidr" ]]; then
+            echo "❌ 第 $line_num 行规则类型错误: '$rule_type'，只支持 'domain' 或 'ipcidr'"
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # 验证URL格式
+          if [[ ! "$url" =~ ^https?:// ]]; then
+            echo "❌ 第 $line_num 行URL格式错误: $url"
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # 检查同一输出文件的规则类型一致性
           if [ -n "${rule_types[$output_file]}" ] && [ "${rule_types[$output_file]}" != "$rule_type" ]; then
-            echo "错误: 输出文件 '$output_file' 包含不同类型的规则 ('${rule_types[$output_file]}' 和 '$rule_type')"
+            echo "❌ 输出文件 '$output_file' 包含不同类型的规则"
+            echo "valid=false" >> $GITHUB_OUTPUT
             exit 1
           fi
           
           rule_types[$output_file]="$rule_type"
+          output_files[$output_file]="${output_files[$output_file]} $url"
+          valid_lines=$((valid_lines + 1))
           
+          echo "✅ 第 $line_num 行: $name ($rule_type) -> $output_file"
+        done < "$CONFIG_FILE"
+        
+        if [ $valid_lines -eq 0 ]; then
+          echo "❌ 配置文件中没有找到有效的规则配置"
+          echo "valid=false" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+        
+        echo "✅ 配置验证通过，找到 $valid_lines 条有效规则配置"
+        echo "valid=true" >> $GITHUB_OUTPUT
+        
+        # 输出规则组信息供后续步骤使用
+        groups_json="{"
+        first=true
+        for output_file in "${!output_files[@]}"; do
+          if [ "$first" = false ]; then
+            groups_json+=","
+          fi
+          groups_json+="\"$output_file\":{\"type\":\"${rule_types[$output_file]}\",\"urls\":\"${output_files[$output_file]}\"}"
+          first=false
+        done
+        groups_json+="}"
+        echo "groups=$groups_json" >> $GITHUB_OUTPUT
+
+  setup-mihomo:
+    name: 安装Mihomo
+    runs-on: ubuntu-latest
+    needs: validate-config
+    if: needs.validate-config.outputs.config-valid == 'true'
+    outputs:
+      mihomo-version: ${{ steps.install.outputs.version }}
+      
+    steps:
+    - name: 缓存Mihomo二进制文件
+      id: cache-mihomo
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/mihomo
+        key: mihomo-${{ runner.os }}-${{ hashFiles('**/go.mod') }}
+        restore-keys: mihomo-${{ runner.os }}-
+        
+    - name: 安装Mihomo
+      id: install
+      if: steps.cache-mihomo.outputs.cache-hit != 'true'
+      run: |
+        echo "🔄 获取Mihomo最新版本..."
+        LATEST_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | \
+          grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        
+        if [ -z "$LATEST_VERSION" ]; then
+          echo "❌ 无法获取Mihomo版本信息"
+          exit 1
+        fi
+        
+        echo "📦 最新版本: $LATEST_VERSION"
+        echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+        
+        # 尝试多种下载方式
+        download_success=false
+        
+        # 方式1: 兼容版本
+        if wget -q -O mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${LATEST_VERSION}/mihomo-linux-amd64-compatible-${LATEST_VERSION}.gz"; then
+          echo "✅ 下载兼容版本成功"
+          download_success=true
+        # 方式2: 标准版本
+        elif wget -q -O mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${LATEST_VERSION}/mihomo-linux-amd64-${LATEST_VERSION}.gz"; then
+          echo "✅ 下载标准版本成功"
+          download_success=true
+        # 方式3: Docker提取
+        else
+          echo "🐳 使用Docker提取二进制文件..."
+          if docker pull metacubex/mihomo:latest && \
+             docker create --name mihomo_temp metacubex/mihomo:latest && \
+             docker cp mihomo_temp:/mihomo ./mihomo && \
+             docker rm mihomo_temp; then
+            echo "✅ Docker提取成功"
+            download_success=true
+          fi
+        fi
+        
+        if [ "$download_success" != true ]; then
+          echo "❌ 所有下载方式都失败了"
+          exit 1
+        fi
+        
+        # 解压和安装
+        if [ -f mihomo.gz ]; then
+          gzip -d mihomo.gz
+        fi
+        
+        chmod +x mihomo
+        sudo mv mihomo /usr/local/bin/mihomo
+        
+        # 验证安装
+        if mihomo -v 2>/dev/null || mihomo --version 2>/dev/null; then
+          echo "✅ Mihomo安装成功"
+        else
+          echo "❌ Mihomo安装验证失败"
+          exit 1
+        fi
+
+  convert-rules:
+    name: 转换规则集
+    runs-on: ubuntu-latest
+    needs: [validate-config, setup-mihomo]
+    if: needs.validate-config.outputs.config-valid == 'true'
+    
+    steps:
+    - name: 检出仓库
+      uses: actions/checkout@v4
+      
+    - name: 恢复Mihomo缓存
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/mihomo
+        key: mihomo-${{ runner.os }}-${{ hashFiles('**/go.mod') }}
+        fail-on-cache-miss: true
+        
+    - name: 创建工作目录
+      run: |
+        mkdir -p "$RULES_DIR" "$OUTPUT_DIR"
+        echo "📁 工作目录创建完成"
+        
+    - name: 下载和处理规则文件
+      run: |
+        echo "🔄 开始处理规则文件..."
+        
+        # 解析配置文件
+        declare -A rule_groups
+        declare -A rule_types
+        
+        while IFS= read -r line || [ -n "$line" ]; do
+          # 跳过注释行和空行
+          if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "${line// }" ]]; then
+            continue
+          fi
+          
+          read -r name rule_type url output_file <<< "$line"
+          
+          rule_types[$output_file]="$rule_type"
           if [ -z "${rule_groups[$output_file]}" ]; then
             rule_groups[$output_file]="$url"
           else
             rule_groups[$output_file]="${rule_groups[$output_file]} $url"
           fi
-        done < rules_config.txt
+        done < "$CONFIG_FILE"
         
         # 处理每个规则组
+        total_groups=${#rule_groups[@]}
+        current_group=0
+        
         for output_file in "${!rule_groups[@]}"; do
+          current_group=$((current_group + 1))
           urls="${rule_groups[$output_file]}"
           rule_type="${rule_types[$output_file]}"
           
-          echo "正在处理规则组: $output_file (类型: $rule_type)"
-          echo "  包含的URL:"
-          for url in $urls; do
-            echo "    - $url"
-          done
+          echo ""
+          echo "📋 [$current_group/$total_groups] 处理规则组: $output_file"
+          echo "   类型: $rule_type"
+          echo "   源文件数量: $(echo $urls | wc -w)"
           
-          # 创建临时文件用于合并
-          merged_file="rules/${output_file}_merged.txt"
+          # 创建合并文件
+          merged_file="$RULES_DIR/${output_file}_merged.txt"
           > "$merged_file"
           
-          # 下载并合并所有规则
+          # 下载和清理每个URL的规则
+          url_count=0
           for url in $urls; do
-            echo "  下载: $url"
-            temp_file="rules/temp_${output_file}_$(basename "$url").txt"
-            if wget -q -O "$temp_file" "$url"; then
-              echo "  ✓ 下载成功"
+            url_count=$((url_count + 1))
+            echo "   🔗 [$url_count] 下载: $(basename "$url")"
+            
+            temp_file="$RULES_DIR/temp_$(basename "$url")"
+            
+            if wget -q --timeout=30 --tries=3 -O "$temp_file" "$url"; then
+              echo "      ✅ 下载成功"
               
-              # 根据规则类型清理和验证规则
+              # 根据规则类型进行清理和验证
               if [ "$rule_type" = "domain" ]; then
-                # 域名规则清理：移除空行、注释、无效格式
-                grep -v '^#' "$temp_file" | \
-                grep -v '^
-          
-          if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
-            echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
-          else
-            echo "  ✗ 生成的文件为空或不存在"
-            exit 1
-          fi
-          echo ""
-        done
-        
-        echo "已生成文件:"
-        ls -la output/
-        
-    - name: 获取当前日期
-      id: date
-      run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
-        
-    - name: 创建发布版本
-      uses: softprops/action-gh-release@v1
-      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-      with:
-        tag_name: v${{ github.run_number }}
-        name: Mihomo规则集 v${{ github.run_number }}
-        body: |
-          自动生成的Mihomo二进制规则集
-          
-          **生成时间:** ${{ steps.date.outputs.date }}
-          
-          包含以下规则集:
-          $(for file in output/*.mrs; do 
-            if [ -f "$file" ]; then 
-              echo "- ${file##*/}"; 
-            fi 
-          done)
-        files: output/*.mrs
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: 上传产物
-      uses: actions/upload-artifact@v4
-      with:
-        name: mihomo-rules-binary
-        path: output/
-        retention-days: 30
-        
-    - name: 提交变更
-      run: |
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
-        
-        # 更新二进制规则文件
-        if ls output/*.mrs 1> /dev/null 2>&1; then
-          cp output/*.mrs ./ 2>/dev/null || true
-          git add *.mrs
-        fi
-        
-        if [ -n "$(git status --porcelain)" ]; then
-          git commit -m "更新Mihomo二进制规则 - $(date -u +%Y-%m-%d)"
-          git push
-        else
-          echo "没有变更需要提交"
-        fi | \
-                grep -v '^[[:space:]]*
-          
-          if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
-            echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
-          else
-            echo "  ✗ 生成的文件为空或不存在"
-            exit 1
-          fi
-          echo ""
-        done
-        
-        echo "已生成文件:"
-        ls -la output/
-        
-    - name: 创建发布版本
-      uses: softprops/action-gh-release@v1
-      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-      with:
-        tag_name: v${{ github.run_number }}
-        name: Mihomo规则集 v${{ github.run_number }}
-        body: |
-          自动生成的Mihomo二进制规则集
-          
-          **生成时间:** ${{ steps.date.outputs.date }}
-          
-          包含以下规则集:
-          $(for file in output/*.mrs; do 
-            if [ -f "$file" ]; then 
-              echo "- ${file##*/}"; 
-            fi 
-          done)
-        files: output/*.mrs
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: 获取当前日期
-      id: date
-      run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
-        
-    - name: 上传产物
-      uses: actions/upload-artifact@v4
-      with:
-        name: mihomo-rules-binary
-        path: output/
-        retention-days: 30
-        
-    - name: 提交变更
-      run: |
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
-        
-        # 更新二进制规则文件
-        if ls output/*.mrs 1> /dev/null 2>&1; then
-          cp output/*.mrs ./ 2>/dev/null || true
-          git add *.mrs
-        fi
-        
-        if [ -n "$(git status --porcelain)" ]; then
-          git commit -m "更新Mihomo二进制规则 - $(date -u +%Y-%m-%d)"
-          git push
-        else
-          echo "没有变更需要提交"
-        fi | \
-                sed 's/^[[:space:]]*//' | \
-                sed 's/[[:space:]]*$//' | \
-                grep -E '^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$|^\+\.[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$|^[a-zA-Z0-9.-]+
-          
-          if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
-            echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
-          else
-            echo "  ✗ 生成的文件为空或不存在"
-            exit 1
-          fi
-          echo ""
-        done
-        
-        echo "已生成文件:"
-        ls -la output/
-        
-    - name: 创建发布版本
-      uses: softprops/action-gh-release@v1
-      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-      with:
-        tag_name: v${{ github.run_number }}
-        name: Mihomo规则集 v${{ github.run_number }}
-        body: |
-          自动生成的Mihomo二进制规则集
-          
-          **生成时间:** ${{ steps.date.outputs.date }}
-          
-          包含以下规则集:
-          $(for file in output/*.mrs; do 
-            if [ -f "$file" ]; then 
-              echo "- ${file##*/}"; 
-            fi 
-          done)
-        files: output/*.mrs
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: 获取当前日期
-      id: date
-      run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
-        
-    - name: 上传产物
-      uses: actions/upload-artifact@v4
-      with:
-        name: mihomo-rules-binary
-        path: output/
-        retention-days: 30
-        
-    - name: 提交变更
-      run: |
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
-        
-        # 更新二进制规则文件
-        if ls output/*.mrs 1> /dev/null 2>&1; then
-          cp output/*.mrs ./ 2>/dev/null || true
-          git add *.mrs
-        fi
-        
-        if [ -n "$(git status --porcelain)" ]; then
-          git commit -m "更新Mihomo二进制规则 - $(date -u +%Y-%m-%d)"
-          git push
-        else
-          echo "没有变更需要提交"
-        fi | \
-                sort -u >> "$merged_file"
+                # 域名规则处理
+                processed_count=$(grep -v '^[[:space:]]*#' "$temp_file" | \
+                  grep -v '^[[:space:]]*$' | \
+                  sed 's/^[[:space:]]*//' | \
+                  sed 's/[[:space:]]*$//' | \
+                  grep -E '^[a-zA-Z0-9*.-]+(\.[a-zA-Z]{2,})?$|^\+\.' | \
+                  sort -u | \
+                  tee -a "$merged_file" | wc -l)
               elif [ "$rule_type" = "ipcidr" ]; then
-                # IP CIDR规则清理：移除空行、注释、验证IP格式
-                grep -v '^#' "$temp_file" | \
-                grep -v '^
-          
-          if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
-            echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
-          else
-            echo "  ✗ 生成的文件为空或不存在"
-            exit 1
-          fi
-          echo ""
-        done
-        
-        echo "已生成文件:"
-        ls -la output/
-        
-    - name: 创建发布版本
-      uses: softprops/action-gh-release@v1
-      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-      with:
-        tag_name: v${{ github.run_number }}
-        name: Mihomo规则集 v${{ github.run_number }}
-        body: |
-          自动生成的Mihomo二进制规则集
-          
-          **生成时间:** ${{ steps.date.outputs.date }}
-          
-          包含以下规则集:
-          $(for file in output/*.mrs; do 
-            if [ -f "$file" ]; then 
-              echo "- ${file##*/}"; 
-            fi 
-          done)
-        files: output/*.mrs
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: 获取当前日期
-      id: date
-      run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
-        
-    - name: 上传产物
-      uses: actions/upload-artifact@v4
-      with:
-        name: mihomo-rules-binary
-        path: output/
-        retention-days: 30
-        
-    - name: 提交变更
-      run: |
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
-        
-        # 更新二进制规则文件
-        if ls output/*.mrs 1> /dev/null 2>&1; then
-          cp output/*.mrs ./ 2>/dev/null || true
-          git add *.mrs
-        fi
-        
-        if [ -n "$(git status --porcelain)" ]; then
-          git commit -m "更新Mihomo二进制规则 - $(date -u +%Y-%m-%d)"
-          git push
-        else
-          echo "没有变更需要提交"
-        fi | \
-                grep -v '^[[:space:]]*
-          
-          if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
-            echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
-          else
-            echo "  ✗ 生成的文件为空或不存在"
-            exit 1
-          fi
-          echo ""
-        done
-        
-        echo "已生成文件:"
-        ls -la output/
-        
-    - name: 创建发布版本
-      uses: softprops/action-gh-release@v1
-      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-      with:
-        tag_name: v${{ github.run_number }}
-        name: Mihomo规则集 v${{ github.run_number }}
-        body: |
-          自动生成的Mihomo二进制规则集
-          
-          **生成时间:** ${{ steps.date.outputs.date }}
-          
-          包含以下规则集:
-          $(for file in output/*.mrs; do 
-            if [ -f "$file" ]; then 
-              echo "- ${file##*/}"; 
-            fi 
-          done)
-        files: output/*.mrs
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: 获取当前日期
-      id: date
-      run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
-        
-    - name: 上传产物
-      uses: actions/upload-artifact@v4
-      with:
-        name: mihomo-rules-binary
-        path: output/
-        retention-days: 30
-        
-    - name: 提交变更
-      run: |
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
-        
-        # 更新二进制规则文件
-        if ls output/*.mrs 1> /dev/null 2>&1; then
-          cp output/*.mrs ./ 2>/dev/null || true
-          git add *.mrs
-        fi
-        
-        if [ -n "$(git status --porcelain)" ]; then
-          git commit -m "更新Mihomo二进制规则 - $(date -u +%Y-%m-%d)"
-          git push
-        else
-          echo "没有变更需要提交"
-        fi | \
-                sed 's/^[[:space:]]*//' | \
-                sed 's/[[:space:]]*$//' | \
-                grep -E '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?$|^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}(/[0-9]{1,3})?
-          
-          if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
-            echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
-          else
-            echo "  ✗ 生成的文件为空或不存在"
-            exit 1
-          fi
-          echo ""
-        done
-        
-        echo "已生成文件:"
-        ls -la output/
-        
-    - name: 创建发布版本
-      uses: softprops/action-gh-release@v1
-      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-      with:
-        tag_name: v${{ github.run_number }}
-        name: Mihomo规则集 v${{ github.run_number }}
-        body: |
-          自动生成的Mihomo二进制规则集
-          
-          **生成时间:** ${{ steps.date.outputs.date }}
-          
-          包含以下规则集:
-          $(for file in output/*.mrs; do 
-            if [ -f "$file" ]; then 
-              echo "- ${file##*/}"; 
-            fi 
-          done)
-        files: output/*.mrs
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: 获取当前日期
-      id: date
-      run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
-        
-    - name: 上传产物
-      uses: actions/upload-artifact@v4
-      with:
-        name: mihomo-rules-binary
-        path: output/
-        retention-days: 30
-        
-    - name: 提交变更
-      run: |
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
-        
-        # 更新二进制规则文件
-        if ls output/*.mrs 1> /dev/null 2>&1; then
-          cp output/*.mrs ./ 2>/dev/null || true
-          git add *.mrs
-        fi
-        
-        if [ -n "$(git status --porcelain)" ]; then
-          git commit -m "更新Mihomo二进制规则 - $(date -u +%Y-%m-%d)"
-          git push
-        else
-          echo "没有变更需要提交"
-        fi | \
-                sort -u >> "$merged_file"
+                # IP CIDR规则处理
+                processed_count=$(grep -v '^[[:space:]]*#' "$temp_file" | \
+                  grep -v '^[[:space:]]*$' | \
+                  sed 's/^[[:space:]]*//' | \
+                  sed 's/[[:space:]]*$//' | \
+                  grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$|^([0-9a-fA-F:]+)(/[0-9]{1,3})?$' | \
+                  sort -u | \
+                  tee -a "$merged_file" | wc -l)
               fi
               
+              echo "      📊 处理了 $processed_count 条有效规则"
               rm -f "$temp_file"
             else
-              echo "  ✗ 下载失败"
+              echo "      ❌ 下载失败"
+              rm -f "$temp_file"
               exit 1
             fi
           done
           
-          # 检查合并后的文件是否有有效规则
-          rule_count=$(wc -l < "$merged_file" 2>/dev/null || echo "0")
-          if [ "$rule_count" -eq 0 ]; then
-            echo "  ✗ 错误: 没有找到有效的规则"
-            echo "  调试信息: 合并文件内容 (前10行):"
-            head -10 "$merged_file" 2>/dev/null || echo "文件为空"
+          # 验证合并结果
+          total_rules=$(wc -l < "$merged_file" 2>/dev/null || echo "0")
+          if [ "$total_rules" -eq 0 ]; then
+            echo "   ❌ 错误: 没有找到有效规则"
+            echo "   🔍 调试信息:"
+            head -10 "$merged_file" 2>/dev/null || echo "   文件为空"
             exit 1
           fi
           
-          echo "  找到 $rule_count 条有效规则"
-          echo "  规则示例 (前5条):"
-          head -5 "$merged_file"
+          # 去重并统计最终规则数
+          sort -u "$merged_file" -o "$merged_file"
+          final_rules=$(wc -l < "$merged_file")
           
-          echo "  开始转换合并后的规则集..."
-          # 根据规则类型选择转换方式并执行
-          if [ "$rule_type" = "domain" ]; then
-            if timeout 120s bash -c "mihomo convert-ruleset domain text \"$merged_file\" \"output/${output_file}\""; then
-              echo "  ✓ 转换成功"
+          echo "   📈 合并后总规则数: $final_rules"
+          echo "   📋 规则示例:"
+          head -3 "$merged_file" | sed 's/^/      /'
+          
+          # 转换为Mihomo格式
+          echo "   🔄 开始转换为二进制格式..."
+          
+          convert_start_time=$(date +%s)
+          if timeout "$MIHOMO_TIMEOUT" mihomo convert-ruleset "$rule_type" text "$merged_file" "$OUTPUT_DIR/$output_file"; then
+            convert_end_time=$(date +%s)
+            convert_duration=$((convert_end_time - convert_start_time))
+            echo "   ✅ 转换成功 (耗时: ${convert_duration}s)"
+            
+            # 验证输出文件
+            if [ -f "$OUTPUT_DIR/$output_file" ] && [ -s "$OUTPUT_DIR/$output_file" ]; then
+              file_size=$(stat -f%z "$OUTPUT_DIR/$output_file" 2>/dev/null || stat -c%s "$OUTPUT_DIR/$output_file")
+              echo "   📁 输出文件: $output_file (${file_size} 字节)"
             else
-              echo "  ✗ 转换失败"
-              echo "  调试信息: 规则文件内容 (最后10行):"
-              tail -10 "$merged_file"
+              echo "   ❌ 输出文件无效或为空"
               exit 1
             fi
-          elif [ "$rule_type" = "ipcidr" ]; then
-            if timeout 120s bash -c "mihomo convert-ruleset ipcidr text \"$merged_file\" \"output/${output_file}\""; then
-              echo "  ✓ 转换成功"
-            else
-              echo "  ✗ 转换失败"
-              echo "  调试信息: 规则文件内容 (最后10行):"
-              tail -10 "$merged_file"
-              exit 1
-            fi
-          fi
-          
-          if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
-            echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
           else
-            echo "  ✗ 生成的文件为空或不存在"
+            echo "   ❌ 转换失败 (超时: ${MIHOMO_TIMEOUT}s)"
+            echo "   🔍 调试信息 - 规则文件末尾:"
+            tail -5 "$merged_file" | sed 's/^/      /'
             exit 1
           fi
-          echo ""
         done
         
-        echo "已生成文件:"
-        ls -la output/
+        echo ""
+        echo "🎉 所有规则转换完成!"
+        echo "📊 生成文件统计:"
+        ls -lah "$OUTPUT_DIR"/ | grep -v "^total" | while read -r line; do
+          echo "   $line"
+        done
+
+    - name: 生成构建报告
+      run: |
+        report_file="$OUTPUT_DIR/build-report.md"
         
-    - name: 创建发布版本
-      uses: softprops/action-gh-release@v1
-      if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        cat > "$report_file" << EOF
+        # Mihomo规则集构建报告
+        
+        **构建时间:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        **Mihomo版本:** ${{ needs.setup-mihomo.outputs.mihomo-version }}
+        **触发方式:** ${{ github.event_name }}
+        
+        ## 生成的规则集
+        
+        EOF
+        
+        for file in "$OUTPUT_DIR"/*.mrs; do
+          if [ -f "$file" ]; then
+            filename=$(basename "$file")
+            filesize=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
+            filesize_mb=$(echo "scale=2; $filesize / 1024 / 1024" | bc 2>/dev/null || echo "N/A")
+            echo "- **$filename** - ${filesize} bytes (${filesize_mb} MB)" >> "$report_file"
+          fi
+        done
+        
+        echo "" >> "$report_file"
+        echo "## 使用方法" >> "$report_file"
+        echo "" >> "$report_file"
+        echo '```yaml' >> "$report_file"
+        echo 'rule-providers:' >> "$report_file"
+        
+        for file in "$OUTPUT_DIR"/*.mrs; do
+          if [ -f "$file" ]; then
+            filename=$(basename "$file" .mrs)
+            echo "  $filename:" >> "$report_file"
+            echo "    type: http" >> "$report_file"
+            echo "    format: mrs" >> "$report_file"
+            echo "    url: https://github.com/${{ github.repository }}/releases/latest/download/$(basename "$file")" >> "$report_file"
+            echo "    interval: 86400" >> "$report_file"
+            echo "" >> "$report_file"
+          fi
+        done
+        
+        echo '```' >> "$report_file"
+
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: mihomo-rules-${{ github.run_number }}
+        path: |
+          ${{ env.OUTPUT_DIR }}/*.mrs
+          ${{ env.OUTPUT_DIR }}/build-report.md
+        retention-days: 30
+        compression-level: 9
+
+  release:
+    name: 创建发布
+    runs-on: ubuntu-latest
+    needs: [validate-config, setup-mihomo, convert-rules]
+    if: |
+      always() && 
+      needs.convert-rules.result == 'success' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    
+    steps:
+    - name: 检出仓库
+      uses: actions/checkout@v4
+      
+    - name: 下载构建产物
+      uses: actions/download-artifact@v4
+      with:
+        name: mihomo-rules-${{ github.run_number }}
+        path: release-files/
+        
+    - name: 生成发布说明
+      id: release-notes
+      run: |
+        cat > release-notes.md << EOF
+        # 🚀 Mihomo规则集 v${{ github.run_number }}
+        
+        > 自动构建的Mihomo二进制规则集，优化加载速度和内存占用
+        
+        ## 📊 构建信息
+        
+        - **构建时间:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")  
+        - **Mihomo版本:** ${{ needs.setup-mihomo.outputs.mihomo-version }}
+        - **规则文件数量:** $(ls -1 release-files/*.mrs 2>/dev/null | wc -l)
+        - **总文件大小:** $(du -sh release-files/ | cut -f1)
+        
+        ## 📋 包含的规则集
+        
+        EOF
+        
+        for file in release-files/*.mrs; do
+          if [ -f "$file" ]; then
+            filename=$(basename "$file")
+            filesize=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
+            filesize_kb=$(echo "scale=1; $filesize / 1024" | bc 2>/dev/null || echo "N/A")
+            echo "- \`$filename\` (${filesize_kb} KB)" >> release-notes.md
+          fi
+        done
+        
+        cat >> release-notes.md << EOF
+        
+        ## 🛠 使用方法
+        
+        在Mihomo配置文件中添加：
+        
+        \`\`\`yaml
+        rule-providers:
+        EOF
+        
+        for file in release-files/*.mrs; do
+          if [ -f "$file" ]; then
+            filename=$(basename "$file" .mrs)
+            cat >> release-notes.md << EOF
+          $filename:
+            type: http
+            format: mrs
+            url: https://github.com/${{ github.repository }}/releases/latest/download/$(basename "$file")
+            interval: 86400
+        EOF
+          fi
+        done
+        
+        cat >> release-notes.md << EOF
+        \`\`\`
+        
+        ## 📝 更新日志
+        
+        - 基于最新规则源自动构建
+        - 优化规则去重和格式验证
+        - 提升转换效率和稳定性
+        
+        ---
+        
+        💡 **提示:** 建议设置自动更新间隔为24小时，确保规则集保持最新状态。
+        EOF
+
+    - name: 创建GitHub发布
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: v${{ github.run_number }}
         name: Mihomo规则集 v${{ github.run_number }}
-        body: |
-          自动生成的Mihomo二进制规则集
-          
-          **生成时间:** ${{ steps.date.outputs.date }}
-          
-          包含以下规则集:
-          $(for file in output/*.mrs; do 
-            if [ -f "$file" ]; then 
-              echo "- ${file##*/}"; 
-            fi 
-          done)
-        files: output/*.mrs
+        body_path: release-notes.md
+        files: release-files/*.mrs
         draft: false
         prerelease: false
+        make_latest: true
+        generate_release_notes: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: 获取当前日期
-      id: date
-      run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
-        
-    - name: 上传产物
-      uses: actions/upload-artifact@v4
+
+  commit-updates:
+    name: 提交更新
+    runs-on: ubuntu-latest
+    needs: [convert-rules]
+    if: |
+      always() && 
+      needs.convert-rules.result == 'success' &&
+      github.event_name != 'pull_request'
+    
+    steps:
+    - name: 检出仓库
+      uses: actions/checkout@v4
       with:
-        name: mihomo-rules-binary
-        path: output/
-        retention-days: 30
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
         
-    - name: 提交变更
+    - name: 下载构建产物
+      uses: actions/download-artifact@v4
+      with:
+        name: mihomo-rules-${{ github.run_number }}
+        path: artifacts/
+        
+    - name: 更新规则文件
       run: |
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
+        echo "📁 复制新的规则文件..."
         
-        # 更新二进制规则文件
-        if ls output/*.mrs 1> /dev/null 2>&1; then
-          cp output/*.mrs ./ 2>/dev/null || true
-          git add *.mrs
-        fi
-        
-        if [ -n "$(git status --porcelain)" ]; then
-          git commit -m "更新Mihomo二进制规则 - $(date -u +%Y-%m-%d)"
-          git push
+        # 复制mrs文件到仓库根目录
+        if ls artifacts/*.mrs 1> /dev/null 2>&1; then
+          cp artifacts/*.mrs ./ 2>/dev/null || true
+          echo "✅ 规则文件已更新"
         else
-          echo "没有变更需要提交"
+          echo "⚠️ 没有找到mrs文件"
         fi
+        
+        # 复制构建报告
+        if [ -f "artifacts/build-report.md" ]; then
+          cp artifacts/build-report.md ./
+          echo "✅ 构建报告已更新"
+        fi
+
+    - name: 检查并提交变更
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action Bot"
+        
+        # 添加所有变更
+        git add *.mrs build-report.md 2>/dev/null || true
+        
+        # 检查是否有变更
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "📝 发现变更，准备提交..."
+          
+          commit_msg="🤖 自动更新Mihomo规则集
+          
+          - 构建时间: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          - 构建号: #${{ github.run_number }}
+          - 规则文件: $(ls -1 *.mrs 2>/dev/null | wc -l) 个
+          - 触发方式: ${{ github.event_name }}"
+          
+          git commit -m "$commit_msg"
+          git push
+          
+          echo "✅ 变更已提交并推送"
+        else
+          echo "ℹ️ 没有检测到变更，跳过提交"
+        fi
+
+  cleanup:
+    name: 清理资源
+    runs-on: ubuntu-latest
+    needs: [convert-rules, release, commit-updates]
+    if: always()
+    
+    steps:
+    - name: 清理旧的构建产物
+      uses: geekyeggo/delete-artifact@v5
+      with:
+        name: mihomo-rules-*
+        useGlob: true
+        failOnError: false
+        
+    - name: 输出构建摘要
+      run: |
+        echo "## 🎯 构建完成摘要" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| 项目 | 状态 |" >> $GITHUB_STEP_SUMMARY
+        echo "|------|------|" >> $GITHUB_STEP_SUMMARY
+        echo "| 配置验证 | ${{ needs.validate-config.result == 'success' && '✅ 通过' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Mihomo安装 | ${{ needs.setup-mihomo.result == 'success' && '✅ 完成' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 规则转换 | ${{ needs.convert-rules.result == 'success' && '✅ 成功' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 创建发布 | ${{ needs.release.result == 'success' && '✅ 完成' || needs.release.result == 'skipped' && '⏭️ 跳过' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 提交更新 | ${{ needs.commit-updates.result == 'success' && '✅ 完成' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**构建时间:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+        echo "**构建编号:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
