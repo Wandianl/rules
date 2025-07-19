@@ -218,7 +218,6 @@ jobs:
         mkdir -p "$RULES_DIR" "$OUTPUT_DIR"
         echo "📁 工作目录创建完成"
         
-    # 新增: 安装 yq 用于处理 YAML 文件
     - name: 安装 yq 工具
       run: |
         sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
@@ -462,7 +461,8 @@ jobs:
             echo "  $filename:" >> "$report_file"
             echo "    type: http" >> "$report_file"
             echo "    format: mrs" >> "$report_file"
-            echo "    url: https://github.com/${{ github.repository }}/releases/latest/download/$(basename "$file")" >> "$report_file"
+            # 指向仓库main分支的原始文件
+            echo "    url: https://github.com/${{ github.repository }}/raw/main/$(basename "$file")" >> "$report_file"
             echo "    interval: 86400" >> "$report_file"
             echo "" >> "$report_file"
           fi
@@ -480,107 +480,8 @@ jobs:
         retention-days: 30
         compression-level: 9
 
-  release:
-    name: 创建发布
-    runs-on: ubuntu-latest
-    needs: [validate-config, setup-mihomo, convert-rules]
-    if: |
-      always() && 
-      needs.convert-rules.result == 'success' &&
-      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    
-    steps:
-    - name: 检出仓库
-      uses: actions/checkout@v4
-      
-    - name: 下载构建产物
-      uses: actions/download-artifact@v4
-      with:
-        name: mihomo-rules-${{ github.run_number }}
-        path: release-files/
-        
-    - name: 生成发布说明
-      id: release-notes
-      run: |
-        cat > release-notes.md << EOF
-        # 🚀 Mihomo规则集 v${{ github.run_number }}
-        
-        > 自动构建的Mihomo二进制规则集，优化加载速度和内存占用
-        
-        ## 📊 构建信息
-        
-        - **构建时间:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")  
-        - **Mihomo版本:** ${{ needs.setup-mihomo.outputs.mihomo-version }}
-        - **规则文件数量:** $(ls -1 release-files/*.mrs 2>/dev/null | wc -l)
-        - **总文件大小:** $(du -sh release-files/ | cut -f1)
-        
-        ## 📋 包含的规则集
-        
-        EOF
-        
-        for file in release-files/*.mrs; do
-          if [ -f "$file" ]; then
-            filename=$(basename "$file")
-            filesize=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
-            filesize_kb=$(echo "scale=1; $filesize / 1024" | bc 2>/dev/null || echo "N/A")
-            echo "- \`$filename\` (${filesize_kb} KB)" >> release-notes.md
-          fi
-        done
-        
-        cat >> release-notes.md << EOF
-        
-        ## 🛠 使用方法
-        
-        在Mihomo配置文件中添加：
-        
-        \`\`\`yaml
-        rule-providers:
-        EOF
-        
-        for file in release-files/*.mrs; do
-          if [ -f "$file" ]; then
-            filename=$(basename "$file" .mrs)
-            cat >> release-notes.md << EOF
-          $filename:
-            type: http
-            format: mrs
-            url: https://github.com/${{ github.repository }}/releases/latest/download/$(basename "$file")
-            interval: 86400
-        EOF
-          fi
-        done
-        
-        cat >> release-notes.md << EOF
-        \`\`\`
-        
-        ## 📝 更新日志
-        
-        - 基于最新规则源自动构建
-        - 优化规则去重和格式验证
-        - 提升转换效率和稳定性
-        - 支持 YAML 和纯文本格式的规则文件
-        
-        ---
-        
-        💡 **提示:** 建议设置自动更新间隔为24小时，确保规则集保持最新状态。
-        EOF
-
-    - name: 创建GitHub发布
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: v${{ github.run_number }}
-        name: Mihomo规则集 v${{ github.run_number }}
-        body_path: release-notes.md
-        files: release-files/*.mrs
-        draft: false
-        prerelease: false
-        make_latest: true
-        generate_release_notes: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   commit-updates:
-    name: 提交更新
+    name: 提交规则文件
     runs-on: ubuntu-latest
     needs: [convert-rules]
     if: |
@@ -649,7 +550,7 @@ jobs:
   cleanup:
     name: 清理资源
     runs-on: ubuntu-latest
-    needs: [convert-rules, release, commit-updates]
+    needs: [convert-rules, commit-updates]
     if: always()
     
     steps:
@@ -669,7 +570,6 @@ jobs:
         echo "| 配置验证 | ${{ needs.validate-config.result == 'success' && '✅ 通过' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Mihomo安装 | ${{ needs.setup-mihomo.result == 'success' && '✅ 完成' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
         echo "| 规则转换 | ${{ needs.convert-rules.result == 'success' && '✅ 成功' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| 创建发布 | ${{ needs.release.result == 'success' && '✅ 完成' || needs.release.result == 'skipped' && '⏭️ 跳过' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
         echo "| 提交更新 | ${{ needs.commit-updates.result == 'success' && '✅ 完成' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**构建时间:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
