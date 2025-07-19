@@ -2,7 +2,7 @@ name: Mihomo规则集自动转换
 
 on:
   schedule:
-    - cron: '0 2 * * *'  # 每日凌晨2点执行
+    - cron: '0 7 * * *'  # 每日7点执行
   workflow_dispatch:
     inputs:
       force_rebuild:
