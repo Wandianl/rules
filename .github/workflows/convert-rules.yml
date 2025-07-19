@@ -128,24 +128,27 @@ jobs:
           done
           
           echo "  开始转换合并后的规则集..."
-          # 根据规则类型选择转换方式
+          # 根据规则类型选择转换方式并执行
           if [ "$rule_type" = "domain" ]; then
-            convert_cmd="mihomo convert-ruleset domain text \"$merged_file\" \"output/${output_file}\""
-          elif [ "$rule_type" = "ipcidr" ]; then
-            convert_cmd="mihomo convert-ruleset ipcidr text \"$merged_file\" \"output/${output_file}\""
-          fi
-          
-          if timeout 120s eval "$convert_cmd"; then
-            echo "  ✓ 转换成功"
-            
-            if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
-              echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
+            if timeout 120s bash -c "mihomo convert-ruleset domain text \"$merged_file\" \"output/${output_file}\""; then
+              echo "  ✓ 转换成功"
             else
-              echo "  ✗ 生成的文件为空或不存在"
+              echo "  ✗ 转换失败"
               exit 1
             fi
+          elif [ "$rule_type" = "ipcidr" ]; then
+            if timeout 120s bash -c "mihomo convert-ruleset ipcidr text \"$merged_file\" \"output/${output_file}\""; then
+              echo "  ✓ 转换成功"
+            else
+              echo "  ✗ 转换失败"
+              exit 1
+            fi
+          fi
+          
+          if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
+            echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
           else
-            echo "  ✗ 转换失败"
+            echo "  ✗ 生成的文件为空或不存在"
             exit 1
           fi
           echo ""
