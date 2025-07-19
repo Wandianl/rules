@@ -271,6 +271,10 @@ jobs:
             if wget -q --timeout=30 --tries=3 -O "$temp_file" "$url"; then
               echo "      ✅ 下载成功"
               
+              # 显示原始文件前几行用于调试
+              echo "      🔍 原始文件示例:"
+              head -5 "$temp_file" | sed 's/^/         /'
+              
               # 根据规则类型进行清理和验证
               if [ "$rule_type" = "domain" ]; then
                 # 域名规则处理
@@ -282,17 +286,41 @@ jobs:
                   sort -u | \
                   tee -a "$merged_file" | wc -l)
               elif [ "$rule_type" = "ipcidr" ]; then
-                # IP CIDR规则处理
+                # IP CIDR规则处理 - 修复正则表达式
                 processed_count=$(grep -v '^[[:space:]]*#' "$temp_file" | \
                   grep -v '^[[:space:]]*$' | \
                   sed 's/^[[:space:]]*//' | \
                   sed 's/[[:space:]]*$//' | \
-                  grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$|^([0-9a-fA-F:]+)(/[0-9]{1,3})?$' | \
+                  grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$|^[0-9a-fA-F:]+:[0-9a-fA-F:]*(/[0-9]{1,3})?$' | \
                   sort -u | \
                   tee -a "$merged_file" | wc -l)
+                
+                # 如果上面的严格匹配没有结果，尝试更宽松的匹配
+                if [ "$processed_count" -eq 0 ]; then
+                  echo "      🔄 尝试宽松的IP格式匹配..."
+                  processed_count=$(grep -v '^[[:space:]]*#' "$temp_file" | \
+                    grep -v '^[[:space:]]*$' | \
+                    sed 's/^[[:space:]]*//' | \
+                    sed 's/[[:space:]]*$//' | \
+                    grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | \
+                    sort -u | \
+                    tee -a "$merged_file" | wc -l)
+                fi
               fi
               
               echo "      📊 处理了 $processed_count 条有效规则"
+              
+              # 如果没有处理到有效规则，显示更多调试信息
+              if [ "$processed_count" -eq 0 ]; then
+                echo "      ⚠️ 没有找到有效规则，原始内容:"
+                head -10 "$temp_file" | sed 's/^/         /'
+                echo "      ⚠️ 文件总行数: $(wc -l < "$temp_file")"
+                
+                # 尝试显示非空行
+                echo "      ⚠️ 非空行示例:"
+                grep -v '^[[:space:]]*$' "$temp_file" | head -5 | sed 's/^/         /'
+              fi
+              
               rm -f "$temp_file"
             else
               echo "      ❌ 下载失败"
@@ -305,8 +333,23 @@ jobs:
           total_rules=$(wc -l < "$merged_file" 2>/dev/null || echo "0")
           if [ "$total_rules" -eq 0 ]; then
             echo "   ❌ 错误: 没有找到有效规则"
-            echo "   🔍 调试信息:"
-            head -10 "$merged_file" 2>/dev/null || echo "   文件为空"
+            echo "   🔍 调试信息 - 合并文件内容:"
+            if [ -f "$merged_file" ]; then
+              head -10 "$merged_file" | sed 's/^/      /' || echo "      文件为空"
+            else
+              echo "      合并文件不存在"
+            fi
+            
+            # 显示最后一个下载文件的详细内容
+            echo "   🔍 最后下载的文件详细内容:"
+            last_temp_file="$RULES_DIR/temp_$(basename "$url")"
+            if [ -f "$last_temp_file" ]; then
+              echo "      文件存在，内容:"
+              cat "$last_temp_file" | head -20 | sed 's/^/         /'
+            else
+              echo "      临时文件已删除"
+            fi
+            
             exit 1
           fi
           
