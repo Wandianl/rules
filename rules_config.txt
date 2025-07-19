@@ -1,15 +1,22 @@
 # 规则集配置文件
-# 格式: 规则组名|下载URL|输出文件名
+# 格式: 规则组名 规则类型 下载URL 输出文件名 (用空格分隔)
+# 规则类型: domain(域名规则) 或 ipcidr(IP规则)
 
-# 直连规则组
-direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt|direct.mrs
-direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt|direct.mrs
-direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/private.txt|direct.mrs
+# 直连域名规则组
+direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt direct-domain.mrs
+direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt direct-domain.mrs
 
-# 代理规则组
-proxy|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt|proxy.mrs
-proxy|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt|proxy.mrs
+# 直连IP规则组
+direct ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt direct-ip.mrs
 
-# 拒绝规则组
-reject|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt|reject.mrs
+# 代理域名规则组
+proxy domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt proxy-domain.mrs
 
+# 代理IP规则组
+proxy ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/telegramcidr.txt proxy-ip.mrs
+
+# 拒绝域名规则组
+reject domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt reject-domain.mrs
+
+# 局域网IP规则组
+lan ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/lancidr.txt lan-ip.mrs
