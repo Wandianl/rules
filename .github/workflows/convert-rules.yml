@@ -57,29 +57,41 @@ jobs:
         if [ ! -f "rules_config.txt" ]; then
           cat << "EOF" > rules_config.txt
 # 规则集配置文件
-# 格式: 规则组名|下载URL|输出文件名
-# 相同输出文件名的规则将自动合并
+# 格式: 规则组名|规则类型|下载URL|输出文件名
+# 规则类型: domain(域名规则) 或 ipcidr(IP规则)
+# 相同输出文件名的规则将自动合并（但必须是相同类型）
 
-# 直连规则组
-direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt|direct.mrs
-direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt|direct.mrs
+# 直连域名规则组
+direct|domain|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt|direct-domain.mrs
+direct|domain|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt|direct-domain.mrs
 
-# 代理规则组
-proxy|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt|proxy.mrs
+# 直连IP规则组
+direct|ipcidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt|direct-ip.mrs
 
-# 拒绝规则组
-reject|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt|reject.mrs
+# 代理域名规则组
+proxy|domain|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt|proxy-domain.mrs
+
+# 代理IP规则组
+proxy|ipcidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/telegramcidr.txt|proxy-ip.mrs
+
+# 拒绝域名规则组
+reject|domain|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt|reject-domain.mrs
+
+# 局域网IP规则组
+lan|ipcidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/lancidr.txt|lan-ip.mrs
 
 # 自定义规则组示例:
-# myrules|https://example.com/my-rules.txt|custom.mrs
+# myrules|domain|https://example.com/my-domain-rules.txt|custom-domain.mrs
+# myrules|ipcidr|https://example.com/my-ip-rules.txt|custom-ip.mrs
 EOF
         fi
         
         # 按输出文件分组处理
         declare -A rule_groups
+        declare -A rule_types
         
         # 读取配置并分组
-        while IFS='|' read -r name url output_file; do
+        while IFS='|' read -r name rule_type url output_file; do
           # 跳过注释行和空行
           if [[ "$name" =~ ^#.* ]] || [[ -z "$name" ]]; then
             continue
@@ -87,8 +99,23 @@ EOF
           
           # 去除首尾空格
           name=$(echo "$name" | xargs)
+          rule_type=$(echo "$rule_type" | xargs)
           url=$(echo "$url" | xargs)
           output_file=$(echo "$output_file" | xargs)
+          
+          # 验证规则类型
+          if [[ "$rule_type" != "domain" && "$rule_type" != "ipcidr" ]]; then
+            echo "错误: 不支持的规则类型 '$rule_type'，只支持 'domain' 或 'ipcidr'"
+            exit 1
+          fi
+          
+          # 检查同一输出文件的规则类型是否一致
+          if [ -n "${rule_types[$output_file]}" ] && [ "${rule_types[$output_file]}" != "$rule_type" ]; then
+            echo "错误: 输出文件 '$output_file' 包含不同类型的规则 ('${rule_types[$output_file]}' 和 '$rule_type')"
+            exit 1
+          fi
+          
+          rule_types[$output_file]="$rule_type"
           
           if [ -z "${rule_groups[$output_file]}" ]; then
             rule_groups[$output_file]="$url"
@@ -100,8 +127,9 @@ EOF
         # 处理每个规则组
         for output_file in "${!rule_groups[@]}"; do
           urls="${rule_groups[$output_file]}"
+          rule_type="${rule_types[$output_file]}"
           
-          echo "正在处理规则组: $output_file"
+          echo "正在处理规则组: $output_file (类型: $rule_type)"
           echo "  包含的URL:"
           for url in $urls; do
             echo "    - $url"
@@ -125,7 +153,14 @@ EOF
           done
           
           echo "  开始转换合并后的规则集..."
-          if timeout 120s mihomo convert-ruleset domain text "$merged_file" "output/${output_file}"; then
+          # 根据规则类型选择转换方式
+          if [ "$rule_type" = "domain" ]; then
+            convert_cmd="mihomo convert-ruleset domain text \"$merged_file\" \"output/${output_file}\""
+          elif [ "$rule_type" = "ipcidr" ]; then
+            convert_cmd="mihomo convert-ruleset ipcidr text \"$merged_file\" \"output/${output_file}\""
+          fi
+          
+          if timeout 120s eval "$convert_cmd"; then
             echo "  ✓ 转换成功"
             
             if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
@@ -152,15 +187,24 @@ EOF
         name: Mihomo规则集 v${{ github.run_number }}
         body: |
           自动生成的Mihomo二进制规则集
-          **生成时间:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          **生成时间:** ${{ steps.date.outputs.date }}
           
           包含以下规则集:
-          $(for file in output/*.mrs; do echo "- ${file##*/}"; done)
+          $(for file in output/*.mrs; do 
+            if [ -f "$file" ]; then 
+              echo "- ${file##*/}"; 
+            fi 
+          done)
         files: output/*.mrs
         draft: false
         prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: 获取当前日期
+      id: date
+      run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
         
     - name: 上传产物
       uses: actions/upload-artifact@v4
@@ -180,10 +224,12 @@ EOF
         fi
         
         # 更新二进制规则文件
-        cp output/*.mrs ./ 2>/dev/null || true
+        if ls output/*.mrs 1> /dev/null 2>&1; then
+          cp output/*.mrs ./ 2>/dev/null || true
+          git add *.mrs
+        fi
         
         if [ -n "$(git status --porcelain)" ]; then
-          git add *.mrs
           git commit -m "更新Mihomo二进制规则 - $(date -u +%Y-%m-%d)"
           git push
         else
