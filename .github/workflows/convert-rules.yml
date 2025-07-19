@@ -55,7 +55,7 @@ jobs:
         
         # 创建规则配置文件（如果仓库中没有）
         if [ ! -f "rules_config.txt" ]; then
-          cat > rules_config.txt << 'EOF'
+          cat << "EOF" > rules_config.txt
 # 规则集配置文件
 # 格式: 规则组名|下载URL|输出文件名
 # 相同输出文件名的规则将自动合并
