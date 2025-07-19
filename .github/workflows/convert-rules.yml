@@ -532,7 +532,7 @@ jobs:
         if [ -n "$(git status --porcelain)" ]; then
           echo "📝 发现变更，准备提交..."
           
-          commit_msg="🤖 自动更新Mihomo规则集
+          commit_msg=" 自动更新
           
           - 构建时间: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
           - 构建号: #${{ github.run_number }}
