@@ -18,5 +18,3 @@ proxy ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/
 # 拒绝域名规则组
 reject domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt reject-domain.mrs
 
-# 局域网IP规则组
-lan ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/lancidr.txt lan-ip.mrs
