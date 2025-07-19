@@ -49,49 +49,97 @@ jobs:
         
         timeout 10s mihomo -v || mihomo --version || echo "版本检查完成"
         
-    - name: 配置规则集
-      run: |
-        cat > rules_config.txt << 'EOF'
-        direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt|direct.mrs
-        proxy|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt|proxy.mrs
-        reject|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt|reject.mrs
-        EOF
-        
     - name: 下载并转换规则
       run: |
         mkdir -p rules output
         
+        # 创建规则配置文件（如果仓库中没有）
+        if [ ! -f "rules_config.txt" ]; then
+          cat > rules_config.txt << 'EOF'
+          # 规则集配置文件
+          # 格式: 规则组名|下载URL|输出文件名
+          # 相同输出文件名的规则将自动合并
+          
+          # 直连规则组
+          direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt|direct.mrs
+          direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt|direct.mrs
+          
+          # 代理规则组
+          proxy|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt|proxy.mrs
+          
+          # 拒绝规则组
+          reject|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt|reject.mrs
+          
+          # 自定义规则组示例:
+          # myrules|https://example.com/my-rules.txt|custom.mrs
+          EOF
+        fi
+        
+        # 按输出文件分组处理
+        declare -A rule_groups
+        
+        # 读取配置并分组
         while IFS='|' read -r name url output_file; do
+          # 跳过注释行和空行
           if [[ "$name" =~ ^#.* ]] || [[ -z "$name" ]]; then
             continue
           fi
           
-          echo "正在处理规则: $name"
-          echo "  下载地址: $url"
-          echo "  输出文件: $output_file"
+          # 去除首尾空格
+          name=$(echo "$name" | xargs)
+          url=$(echo "$url" | xargs)
+          output_file=$(echo "$output_file" | xargs)
           
-          if wget -O "rules/${name}.txt" "$url"; then
-            echo "  ✓ 下载成功"
-            
-            if timeout 60s mihomo convert-ruleset domain text "rules/${name}.txt" "output/${output_file}"; then
-              echo "  ✓ 转换成功"
-              
-              if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
-                echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
-              else
-                echo "  ✗ 生成的文件为空或不存在"
-                exit 1
-              fi
+          if [ -z "${rule_groups[$output_file]}" ]; then
+            rule_groups[$output_file]="$url"
+          else
+            rule_groups[$output_file]="${rule_groups[$output_file]} $url"
+          fi
+        done < rules_config.txt
+        
+        # 处理每个规则组
+        for output_file in "${!rule_groups[@]}"; do
+          urls="${rule_groups[$output_file]}"
+          
+          echo "正在处理规则组: $output_file"
+          echo "  包含的URL:"
+          for url in $urls; do
+            echo "    - $url"
+          done
+          
+          # 创建临时文件用于合并
+          merged_file="rules/${output_file}_merged.txt"
+          > "$merged_file"
+          
+          # 下载并合并所有规则
+          for url in $urls; do
+            echo "  下载: $url"
+            if wget -q -O - "$url" >> "$merged_file"; then
+              echo "  ✓ 下载成功"
+              # 确保每个规则文件后有空行
+              echo "" >> "$merged_file"
             else
-              echo "  ✗ 转换失败"
+              echo "  ✗ 下载失败"
+              exit 1
+            fi
+          done
+          
+          echo "  开始转换合并后的规则集..."
+          if timeout 120s mihomo convert-ruleset domain text "$merged_file" "output/${output_file}"; then
+            echo "  ✓ 转换成功"
+            
+            if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
+              echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
+            else
+              echo "  ✗ 生成的文件为空或不存在"
               exit 1
             fi
           else
-            echo "  ✗ 下载失败"
+            echo "  ✗ 转换失败"
             exit 1
           fi
           echo ""
-        done < rules_config.txt
+        done
         
         echo "已生成文件:"
         ls -la output/
@@ -101,10 +149,13 @@ jobs:
       if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
       with:
         tag_name: v${{ github.run_number }}
-        name: 规则集 v${{ github.run_number }}
+        name: Mihomo规则集 v${{ github.run_number }}
         body: |
-          自动生成的二进制规则集
+          自动生成的Mihomo二进制规则集
           **生成时间:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          包含以下规则集:
+          $(for file in output/*.mrs; do echo "- ${file##*/}"; done)
         files: output/*.mrs
         draft: false
         prerelease: false
@@ -123,11 +174,17 @@ jobs:
         git config --global user.email "action@github.com"
         git config --global user.name "GitHub Action"
         
+        # 将配置文件添加到仓库（如果不存在）
+        if [ ! -f "rules_config.txt" ]; then
+          git add rules_config.txt
+        fi
+        
+        # 更新二进制规则文件
         cp output/*.mrs ./ 2>/dev/null || true
         
         if [ -n "$(git status --porcelain)" ]; then
           git add *.mrs
-          git commit -m "更新规则 - $(date -u +%Y-%m-%d)"
+          git commit -m "更新Mihomo二进制规则 - $(date -u +%Y-%m-%d)"
           git push
         else
           echo "没有变更需要提交"
