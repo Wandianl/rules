@@ -1,11 +1,9 @@
-name: Convert Rules to Mihomo Binary
+name: 转换规则为Mihomo二进制格式
 
 on:
   schedule:
-    # 每天凌晨2点运行
     - cron: '0 2 * * *'
   workflow_dispatch:
-    # 手动触发
   push:
     branches: [ main ]
 
@@ -14,38 +12,33 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout repository
+    - name: 检出仓库
       uses: actions/checkout@v4
       
-    - name: Setup Go
+    - name: 安装Go环境
       uses: actions/setup-go@v4
       with:
         go-version: '1.21'
         
-    - name: Install mihomo
+    - name: 安装Mihomo
       run: |
-        # 获取最新版本号
         LATEST_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        echo "Latest version: $LATEST_VERSION"
+        echo "最新版本号: $LATEST_VERSION"
         
-        # 尝试多种文件名格式
-        echo "Trying to download mihomo binary..."
+        echo "尝试下载mihomo二进制文件..."
         
-        # 方法1: 尝试 compatible 版本 (推荐)
         if wget -O mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${LATEST_VERSION}/mihomo-linux-amd64-compatible-${LATEST_VERSION}.gz" 2>/dev/null; then
-          echo "Downloaded compatible version"
+          echo "已下载兼容版本"
           gzip -d mihomo.gz
           chmod +x mihomo
           sudo mv mihomo /usr/local/bin/mihomo
-        # 方法2: 尝试普通版本
         elif wget -O mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${LATEST_VERSION}/mihomo-linux-amd64-${LATEST_VERSION}.gz" 2>/dev/null; then
-          echo "Downloaded regular version"
+          echo "已下载标准版本"
           gzip -d mihomo.gz
           chmod +x mihomo
           sudo mv mihomo /usr/local/bin/mihomo
-        # 方法3: 使用Docker方式
         else
-          echo "Direct download failed, using Docker to extract binary..."
+          echo "直接下载失败，使用Docker提取二进制文件..."
           docker pull metacubex/mihomo:latest
           docker create --name mihomo_temp metacubex/mihomo:latest
           docker cp mihomo_temp:/mihomo ./mihomo
@@ -54,178 +47,88 @@ jobs:
           sudo mv mihomo /usr/local/bin/mihomo
         fi
         
-        # 验证安装 - 只检查版本，不启动服务
-        timeout 10s mihomo -v || mihomo --version || echo "Version check completed"
+        timeout 10s mihomo -v || mihomo --version || echo "版本检查完成"
         
-    - name: Setup rules configuration
+    - name: 配置规则集
       run: |
-        # 创建规则配置文件，方便添加新的规则集
         cat > rules_config.txt << 'EOF'
-        # 规则集配置文件
-        # 格式: 规则名称|下载URL|输出文件名
-        # 一行一个规则集，使用 # 开头的行为注释
-        
-        # Loyalsoldier 规则集
         direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt|direct.mrs
         proxy|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt|proxy.mrs
         reject|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt|reject.mrs
-        
-        # 可以添加更多规则集，例如：
-        # private|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/private.txt|private.mrs
-        # gfw|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt|gfw.mrs
-        # greatfire|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/greatfire.txt|greatfire.mrs
-        # tld-not-cn|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/tld-not-cn.txt|tld-not-cn.mrs
-        # telegramcidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/telegramcidr.txt|telegramcidr.mrs
-        # cncidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt|cncidr.mrs
-        # lancidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/lancidr.txt|lancidr.mrs
-        # applications|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt|applications.mrs
         EOF
         
-    - name: Download and convert rules
+    - name: 下载并转换规则
       run: |
         mkdir -p rules output
         
-        # 读取规则配置文件并处理每个规则集
         while IFS='|' read -r name url output_file; do
-          # 跳过注释行和空行
           if [[ "$name" =~ ^#.* ]] || [[ -z "$name" ]]; then
             continue
           fi
           
-          echo "Processing rule: $name"
-          echo "  URL: $url"
-          echo "  Output: $output_file"
+          echo "正在处理规则: $name"
+          echo "  下载地址: $url"
+          echo "  输出文件: $output_file"
           
-          # 下载规则文件
           if wget -O "rules/${name}.txt" "$url"; then
-            echo "  ✓ Downloaded successfully"
+            echo "  ✓ 下载成功"
             
-            # 转换为二进制格式
             if timeout 60s mihomo convert-ruleset domain text "rules/${name}.txt" "output/${output_file}"; then
-              echo "  ✓ Converted to binary format"
+              echo "  ✓ 转换成功"
               
-              # 验证生成的文件
               if [ -f "output/${output_file}" ] && [ -s "output/${output_file}" ]; then
-                echo "  ✓ File verified: $(stat -c%s "output/${output_file}") bytes"
+                echo "  ✓ 文件验证通过: $(stat -c%s "output/${output_file}") 字节"
               else
-                echo "  ✗ Generated file is empty or missing"
+                echo "  ✗ 生成的文件为空或不存在"
                 exit 1
               fi
             else
-              echo "  ✗ Conversion failed"
+              echo "  ✗ 转换失败"
               exit 1
             fi
           else
-            echo "  ✗ Download failed"
+            echo "  ✗ 下载失败"
             exit 1
           fi
           echo ""
         done < rules_config.txt
         
-        # 显示所有生成的文件
-        echo "Generated files:"
+        echo "已生成文件:"
         ls -la output/
         
-    - name: Generate usage documentation
-      run: |
-        # 生成使用说明
-        cat > output/README.md << 'EOF'
-        # Mihomo Binary Rules
-        
-        Generated at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-        
-        ## Available Rule Sets
-        
-        EOF
-        
-        # 动态生成规则集列表
-        echo "| File | Description |" >> output/README.md
-        echo "|------|-------------|" >> output/README.md
-        
-        while IFS='|' read -r name url output_file; do
-          if [[ "$name" =~ ^#.* ]] || [[ -z "$name" ]]; then
-            continue
-          fi
-          if [ -f "output/${output_file}" ]; then
-            echo "| ${output_file} | ${name} rules |" >> output/README.md
-          fi
-        done < rules_config.txt
-        
-        # 添加使用说明
-        cat >> output/README.md << 'EOF'
-        
-        ## Usage in mihomo config
-        
-        ```yaml
-        rule-providers:
-          direct:
-            type: http
-            behavior: domain
-            format: mrs
-            url: https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/direct.mrs
-            interval: 86400
-          proxy:
-            type: http
-            behavior: domain
-            format: mrs
-            url: https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/proxy.mrs
-            interval: 86400
-          reject:
-            type: http
-            behavior: domain
-            format: mrs
-            url: https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest/download/reject.mrs
-            interval: 86400
-        
-        rules:
-          - RULE-SET,reject,REJECT
-          - RULE-SET,direct,DIRECT
-          - RULE-SET,proxy,PROXY
-        ```
-        EOF
-        
-    - name: Create release
+    - name: 创建发布版本
       uses: softprops/action-gh-release@v1
       if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
       with:
         tag_name: v${{ github.run_number }}
-        name: Mihomo Rules Binary v${{ github.run_number }}
+        name: 规则集 v${{ github.run_number }}
         body: |
-          ## Mihomo Binary Rules
-          
-          This release contains converted binary rule files for mihomo.
-          
-          **Generated at:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
-          
-          See README.md for detailed usage instructions.
-        files: |
-          output/*.mrs
-          output/README.md
+          自动生成的二进制规则集
+          **生成时间:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+        files: output/*.mrs
         draft: false
         prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
-    - name: Upload artifacts
+    - name: 上传产物
       uses: actions/upload-artifact@v4
       with:
         name: mihomo-rules-binary
         path: output/
         retention-days: 30
         
-    - name: Commit and push if changed
+    - name: 提交变更
       run: |
         git config --global user.email "action@github.com"
         git config --global user.name "GitHub Action"
         
-        # 将二进制文件提交到仓库（可选）
         cp output/*.mrs ./ 2>/dev/null || true
-        cp output/README.md ./ 2>/dev/null || true
         
         if [ -n "$(git status --porcelain)" ]; then
-          git add *.mrs README.md rules_config.txt
-          git commit -m "Update mihomo binary rules - $(date -u +%Y-%m-%d)"
+          git add *.mrs
+          git commit -m "更新规则 - $(date -u +%Y-%m-%d)"
           git push
         else
-          echo "No changes to commit"
+          echo "没有变更需要提交"
         fi
