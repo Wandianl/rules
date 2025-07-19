@@ -53,37 +53,12 @@ jobs:
       run: |
         mkdir -p rules output
         
-        # 创建规则配置文件（如果仓库中没有）
+        # 检查配置文件是否存在
         if [ ! -f "rules_config.txt" ]; then
-          cat > rules_config.txt << 'EOF'
-# 规则集配置文件
-# 格式: 规则组名 规则类型 下载URL 输出文件名 (用空格分隔)
-# 规则类型: domain(域名规则) 或 ipcidr(IP规则)
-# 相同输出文件名的规则将自动合并（但必须是相同类型）
-
-# 直连域名规则组
-direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt direct-domain.mrs
-direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt direct-domain.mrs
-
-# 直连IP规则组
-direct ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt direct-ip.mrs
-
-# 代理域名规则组
-proxy domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt proxy-domain.mrs
-
-# 代理IP规则组
-proxy ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/telegramcidr.txt proxy-ip.mrs
-
-# 拒绝域名规则组
-reject domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt reject-domain.mrs
-
-# 局域网IP规则组
-lan ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/lancidr.txt lan-ip.mrs
-
-# 自定义规则组示例:
-# myrules domain https://example.com/my-domain-rules.txt custom-domain.mrs
-# myrules ipcidr https://example.com/my-ip-rules.txt custom-ip.mrs
-EOF
+          echo "错误: rules_config.txt 配置文件不存在，请先创建配置文件"
+          echo "配置文件格式: 规则组名 规则类型 下载URL 输出文件名 (用空格分隔)"
+          echo "规则类型: domain(域名规则) 或 ipcidr(IP规则)"
+          exit 1
         fi
         
         # 按输出文件分组处理
@@ -217,11 +192,6 @@ EOF
       run: |
         git config --global user.email "action@github.com"
         git config --global user.name "GitHub Action"
-        
-        # 将配置文件添加到仓库（如果不存在）
-        if [ ! -f "rules_config.txt" ]; then
-          git add rules_config.txt
-        fi
         
         # 更新二进制规则文件
         if ls output/*.mrs 1> /dev/null 2>&1; then
