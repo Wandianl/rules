@@ -56,23 +56,23 @@ jobs:
         # 创建规则配置文件（如果仓库中没有）
         if [ ! -f "rules_config.txt" ]; then
           cat > rules_config.txt << 'EOF'
-          # 规则集配置文件
-          # 格式: 规则组名|下载URL|输出文件名
-          # 相同输出文件名的规则将自动合并
-          
-          # 直连规则组
-          direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt|direct.mrs
-          direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt|direct.mrs
-          
-          # 代理规则组
-          proxy|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt|proxy.mrs
-          
-          # 拒绝规则组
-          reject|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt|reject.mrs
-          
-          # 自定义规则组示例:
-          # myrules|https://example.com/my-rules.txt|custom.mrs
-          EOF
+# 规则集配置文件
+# 格式: 规则组名|下载URL|输出文件名
+# 相同输出文件名的规则将自动合并
+
+# 直连规则组
+direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt|direct.mrs
+direct|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt|direct.mrs
+
+# 代理规则组
+proxy|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt|proxy.mrs
+
+# 拒绝规则组
+reject|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt|reject.mrs
+
+# 自定义规则组示例:
+# myrules|https://example.com/my-rules.txt|custom.mrs
+EOF
         fi
         
         # 按输出文件分组处理
