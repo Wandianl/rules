@@ -55,34 +55,34 @@ jobs:
         
         # 创建规则配置文件（如果仓库中没有）
         if [ ! -f "rules_config.txt" ]; then
-          cat << "EOF" > rules_config.txt
+          cat > rules_config.txt << 'EOF'
 # 规则集配置文件
-# 格式: 规则组名|规则类型|下载URL|输出文件名
+# 格式: 规则组名 规则类型 下载URL 输出文件名 (用空格分隔)
 # 规则类型: domain(域名规则) 或 ipcidr(IP规则)
 # 相同输出文件名的规则将自动合并（但必须是相同类型）
 
 # 直连域名规则组
-direct|domain|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt|direct-domain.mrs
-direct|domain|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt|direct-domain.mrs
+direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt direct-domain.mrs
+direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt direct-domain.mrs
 
 # 直连IP规则组
-direct|ipcidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt|direct-ip.mrs
+direct ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt direct-ip.mrs
 
 # 代理域名规则组
-proxy|domain|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt|proxy-domain.mrs
+proxy domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt proxy-domain.mrs
 
 # 代理IP规则组
-proxy|ipcidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/telegramcidr.txt|proxy-ip.mrs
+proxy ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/telegramcidr.txt proxy-ip.mrs
 
 # 拒绝域名规则组
-reject|domain|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt|reject-domain.mrs
+reject domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt reject-domain.mrs
 
 # 局域网IP规则组
-lan|ipcidr|https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/lancidr.txt|lan-ip.mrs
+lan ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/lancidr.txt lan-ip.mrs
 
 # 自定义规则组示例:
-# myrules|domain|https://example.com/my-domain-rules.txt|custom-domain.mrs
-# myrules|ipcidr|https://example.com/my-ip-rules.txt|custom-ip.mrs
+# myrules domain https://example.com/my-domain-rules.txt custom-domain.mrs
+# myrules ipcidr https://example.com/my-ip-rules.txt custom-ip.mrs
 EOF
         fi
         
@@ -91,7 +91,7 @@ EOF
         declare -A rule_types
         
         # 读取配置并分组
-        while IFS='|' read -r name rule_type url output_file; do
+        while read -r name rule_type url output_file; do
           # 跳过注释行和空行
           if [[ "$name" =~ ^#.* ]] || [[ -z "$name" ]]; then
             continue
