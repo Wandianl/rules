@@ -5,13 +5,13 @@
 # 直连域名规则组
 direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt direct-domain.mrs
 direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt direct-domain.mrs
-
+direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/private.txt direct-domain.mrs
 # 直连IP规则组
 direct ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt direct-ip.mrs
 
 # 代理域名规则组
 proxy domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/proxy.txt proxy-domain.mrs
-
+proxy domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/gfw.txt proxy-domain.mrs
 # 代理IP规则组
 proxy ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/telegramcidr.txt proxy-ip.mrs
 
