@@ -432,7 +432,7 @@ jobs:
         cat > "$report_file" << EOF
         # Mihomo规则集构建报告
         
-        **构建时间:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        **构建时间:** $(TZ=Asia/Shanghai date +"%Y-%m-%d %H:%M:%S (北京时间)")
         **Mihomo版本:** ${{ needs.setup-mihomo.outputs.mihomo-version }}
         **触发方式:** ${{ github.event_name }}
         
@@ -534,7 +534,7 @@ jobs:
           
           commit_msg=" 自动更新
           
-          - 构建时间: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          - 构建时间: $(TZ=Asia/Shanghai date +"%Y-%m-%d %H:%M:%S (北京时间)")
           - 构建号: #${{ github.run_number }}
           - 规则文件: $(ls -1 *.mrs 2>/dev/null | wc -l) 个
           - 触发方式: ${{ github.event_name }}"
@@ -572,5 +572,5 @@ jobs:
         echo "| 规则转换 | ${{ needs.convert-rules.result == 'success' && '✅ 成功' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
         echo "| 提交更新 | ${{ needs.commit-updates.result == 'success' && '✅ 完成' || '❌ 失败' }} |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**构建时间:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+        echo "**构建时间:** $(TZ=Asia/Shanghai date +"%Y-%m-%d %H:%M:%S (北京时间)")" >> $GITHUB_STEP_SUMMARY
         echo "**构建编号:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
