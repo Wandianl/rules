@@ -6,6 +6,7 @@
 direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/direct.txt direct-domain.mrs
 direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/applications.txt direct-domain.mrs
 direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/private.txt direct-domain.mrs
+direct domain https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/lancidr.txt direct-domain.mrs
 # 直连IP规则组
 direct ipcidr https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/cncidr.txt direct-ip.mrs
 
