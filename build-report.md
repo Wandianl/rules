@@ -1,6 +1,6 @@
 # Mihomo规则集构建报告
 
-**构建时间:** 2026-08-08 07:34:28 (北京时间)
+**构建时间:** 2026-08-09 07:30:13 (北京时间)
 **Mihomo版本:** 
 **触发方式:** schedule
 
@@ -10,7 +10,7 @@
 - **direct-ip.mrs** - 15572 bytes (.01 MB)
 - **proxy-domain.mrs** - 195336 bytes (.18 MB)
 - **proxy-ip.mrs** - 157 bytes (0 MB)
-- **reject-domain.mrs** - 1638007 bytes (1.56 MB)
+- **reject-domain.mrs** - 1641829 bytes (1.56 MB)
 
 ## 使用方法
 
